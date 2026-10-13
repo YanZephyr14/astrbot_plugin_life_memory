@@ -77,6 +77,22 @@
             <span class="plan-label">今日安排:</span>
             <span id="planDay" class="plan-content">（今天尚未进行生活规划）</span>
           </div>
+          <div class="plan-row" id="planOutfitRow" style="display: none;">
+            <span class="plan-label">今日穿搭:</span>
+            <span id="planOutfit" class="plan-content">-</span>
+          </div>
+          <div class="plan-row" id="planMoodRow" style="display: none;">
+            <span class="plan-label">当前心境:</span>
+            <span id="planMood" class="plan-content">-</span>
+          </div>
+          <div class="plan-row" id="planLocationRow" style="display: none;">
+            <span class="plan-label">当前地点:</span>
+            <span id="planLocation" class="plan-content">-</span>
+          </div>
+          <div class="plan-row" id="planHolidayRow" style="display: none;">
+            <span class="plan-label">今日节日:</span>
+            <span id="planHoliday" class="plan-content">-</span>
+          </div>
           <div class="plan-row" id="planTwistRow" style="display: none;">
             <span class="plan-label">偶发事件:</span>
             <span id="planTwist" class="plan-content">-</span>
@@ -92,6 +108,20 @@
           <div class="form-group">
             <label class="form-label" for="inputPlanDay">今天大致做什么（一两句说清）：</label>
             <input type="text" id="inputPlanDay" class="input-text" placeholder="例：上午写稿，下午去超市买菜，傍晚沿江散步" />
+          </div>
+          <div style="display: flex; gap: 14px; flex-wrap: wrap;">
+            <div class="form-group" style="flex: 1; min-width: 180px;">
+              <label class="form-label" for="inputPlanOutfit">今日穿搭（选填）：</label>
+              <input type="text" id="inputPlanOutfit" class="input-text" placeholder="例：浅色宽松卫衣 / 休闲衬衫" />
+            </div>
+            <div class="form-group" style="flex: 1; min-width: 180px;">
+              <label class="form-label" for="inputPlanMood">当前心情（选填）：</label>
+              <input type="text" id="inputPlanMood" class="input-text" placeholder="例：平静专注 / 偶有倦意" />
+            </div>
+            <div class="form-group" style="flex: 1; min-width: 180px;">
+              <label class="form-label" for="inputPlanLocation">常驻地点（选填）：</label>
+              <input type="text" id="inputPlanLocation" class="input-text" placeholder="例：书房 / 咖啡馆" />
+            </div>
           </div>
           <div style="display: flex; gap: 14px; flex-wrap: wrap;">
             <div class="form-group" style="flex: 1; min-width: 200px;">

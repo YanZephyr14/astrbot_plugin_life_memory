@@ -21,6 +21,14 @@ const statScopeDesc = document.getElementById("statScopeDesc");
 
 const planDisplay = document.getElementById("planDisplay");
 const planDay = document.getElementById("planDay");
+const planOutfitRow = document.getElementById("planOutfitRow");
+const planOutfit = document.getElementById("planOutfit");
+const planMoodRow = document.getElementById("planMoodRow");
+const planMood = document.getElementById("planMood");
+const planLocationRow = document.getElementById("planLocationRow");
+const planLocation = document.getElementById("planLocation");
+const planHolidayRow = document.getElementById("planHolidayRow");
+const planHoliday = document.getElementById("planHoliday");
 const planTwistRow = document.getElementById("planTwistRow");
 const planTwist = document.getElementById("planTwist");
 const planWeatherRow = document.getElementById("planWeatherRow");
@@ -29,6 +37,9 @@ const planWeather = document.getElementById("planWeather");
 const btnTogglePlanEdit = document.getElementById("btnTogglePlanEdit");
 const planEditForm = document.getElementById("planEditForm");
 const inputPlanDay = document.getElementById("inputPlanDay");
+const inputPlanOutfit = document.getElementById("inputPlanOutfit");
+const inputPlanMood = document.getElementById("inputPlanMood");
+const inputPlanLocation = document.getElementById("inputPlanLocation");
 const inputPlanTwist = document.getElementById("inputPlanTwist");
 const inputPlanWeather = document.getElementById("inputPlanWeather");
 const btnCancelPlan = document.getElementById("btnCancelPlan");
@@ -77,13 +88,44 @@ async function loadOverview() {
     // 渲染作用域下拉列表
     renderScopeOptions(data.scopes || [currentScopeKey]);
 
+    const slotTag = data.current_slot ? ` · ${data.current_slot}` : "";
+
     // 统计卡片渲染
     if (data.is_today_planned && data.plan) {
-      badgePlanStatus.textContent = "今日已规划";
+      badgePlanStatus.textContent = `今日已规划${slotTag}`;
       badgePlanStatus.className = "badge badge-ongoing";
       statPlanSummary.textContent = "已就绪";
       statPlanDetail.textContent = data.plan.day || "-";
       planDay.textContent = data.plan.day || "-";
+
+      if (data.plan.outfit) {
+        planOutfit.textContent = data.plan.outfit;
+        planOutfitRow.style.display = "flex";
+      } else {
+        planOutfitRow.style.display = "none";
+      }
+
+      if (data.plan.mood) {
+        planMood.textContent = data.plan.mood;
+        planMoodRow.style.display = "flex";
+      } else {
+        planMoodRow.style.display = "none";
+      }
+
+      if (data.plan.location) {
+        planLocation.textContent = data.plan.location;
+        planLocationRow.style.display = "flex";
+      } else {
+        planLocationRow.style.display = "none";
+      }
+
+      if (data.plan.holiday && data.plan.holiday !== "无") {
+        planHoliday.textContent = `🎉 ${data.plan.holiday}`;
+        planHolidayRow.style.display = "flex";
+      } else {
+        planHolidayRow.style.display = "none";
+      }
+
       if (data.plan.twist) {
         planTwist.textContent = data.plan.twist;
         planTwistRow.style.display = "flex";
@@ -97,11 +139,15 @@ async function loadOverview() {
         planWeatherRow.style.display = "none";
       }
     } else {
-      badgePlanStatus.textContent = "今日未规划";
+      badgePlanStatus.textContent = `今日未规划${slotTag}`;
       badgePlanStatus.className = "badge badge-done";
       statPlanSummary.textContent = "待规划";
-      statPlanDetail.textContent = "AI 角色将在第一轮对话中自动规划";
+      statPlanDetail.textContent = `当前为 ${data.current_slot || "今天"}，AI 角色将在第一轮对话中自动规划`;
       planDay.textContent = "（今天尚未进行生活规划）";
+      planOutfitRow.style.display = "none";
+      planMoodRow.style.display = "none";
+      planLocationRow.style.display = "none";
+      planHolidayRow.style.display = "none";
       planTwistRow.style.display = "none";
       planWeatherRow.style.display = "none";
     }
@@ -279,12 +325,18 @@ btnSavePlan.addEventListener("click", async () => {
     showToast("请填写规划内容", true);
     return;
   }
+  const outfit = inputPlanOutfit.value.trim();
+  const mood = inputPlanMood.value.trim();
+  const location = inputPlanLocation.value.trim();
   const twist = inputPlanTwist.value.trim();
   const weather = inputPlanWeather.value.trim();
 
   try {
     const res = await bridge.apiPost("dashboard/plan/save", {
       day,
+      outfit,
+      mood,
+      location,
       twist,
       weather,
       scope_key: currentScopeKey,
@@ -310,10 +362,16 @@ btnTogglePlanEdit.addEventListener("click", () => {
     // 预填当前规划
     if (currentOverview && currentOverview.plan) {
       inputPlanDay.value = currentOverview.plan.day || "";
+      inputPlanOutfit.value = currentOverview.plan.outfit || "";
+      inputPlanMood.value = currentOverview.plan.mood || "";
+      inputPlanLocation.value = currentOverview.plan.location || "";
       inputPlanTwist.value = currentOverview.plan.twist || "";
       inputPlanWeather.value = currentOverview.plan.weather || "";
     } else {
       inputPlanDay.value = "";
+      inputPlanOutfit.value = "";
+      inputPlanMood.value = "";
+      inputPlanLocation.value = "";
       inputPlanTwist.value = "";
       inputPlanWeather.value = "";
     }

@@ -50,5 +50,41 @@
     "hint": "session: 各会话独立记忆生活；global: 全局共用同一份生活线（机器人自己的生活在所有聊天中保持一致）。",
     "default": "session",
     "options": ["session", "global"]
+  },
+  "enable_holiday": {
+    "type": "bool",
+    "description": "节日感知",
+    "hint": "开启后自动感知中国法定与传统节日，并在规划与上下文中呈现节日氛围。架空世界观建议关闭。",
+    "default": true
+  },
+  "enable_outfit": {
+    "type": "bool",
+    "description": "穿搭感知",
+    "hint": "开启后在今日生活状态中感知外貌穿搭风格。非人类或抽象助手角色建议关闭。",
+    "default": true
+  },
+  "history_plan_days": {
+    "type": "int",
+    "description": "参考历史规划天数",
+    "hint": "规划新一天或回忆时参考前几天历史规划的数量（0~7天），维持生活连续性。默认 2 天。",
+    "default": 2,
+    "slider": {
+      "min": 0,
+      "max": 7,
+      "step": 1
+    }
+  },
+  "session_list_mode": {
+    "type": "string",
+    "description": "会话启用范围",
+    "hint": "all: 所有会话均启用；whitelist: 仅列表中会话启用；blacklist: 列表中会话禁用。",
+    "default": "all",
+    "options": ["all", "whitelist", "blacklist"]
+  },
+  "session_list": {
+    "type": "list",
+    "description": "会话列表 (UMO)",
+    "hint": "配合会话启用范围使用，填入统一消息来源 (UMO)，如 aiocqhttp:GroupMessage:123456。",
+    "default": []
   }
 }

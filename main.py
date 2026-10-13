@@ -23,16 +23,24 @@ from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 try:
     from .store import (
         LifeStore,
+        extract_current_slot_schedule,
+        get_natural_slot_name,
+        get_today_holiday,
         is_same_event,
         is_today,
+        minute_of_day,
         normalize_text,
         prune_events,
     )
 except ImportError:
     from store import (  # type: ignore
         LifeStore,
+        extract_current_slot_schedule,
+        get_natural_slot_name,
+        get_today_holiday,
         is_same_event,
         is_today,
+        minute_of_day,
         normalize_text,
         prune_events,
     )
@@ -144,6 +152,29 @@ class LifeMemoryPlugin(Star):
             return "__global__"
         return event.unified_msg_origin or event.get_session_id() or "__default__"
 
+    def _is_session_enabled(self, unified_msg_origin: str) -> bool:
+        """检查当前会话是否在允许的启用范围内。
+
+        Args:
+            unified_msg_origin: 统一消息来源标识。
+
+        Returns:
+            若当前会话允许启用返回 True，否则返回 False。
+        """
+        mode = str(self.config.get("session_list_mode", "all")).lower().strip()
+        if mode == "all":
+            return True
+        session_list = [
+            str(x).strip()
+            for x in self.config.get("session_list", [])
+            if str(x).strip()
+        ]
+        if mode == "whitelist":
+            return unified_msg_origin in session_list
+        if mode == "blacklist":
+            return unified_msg_origin not in session_list
+        return True
+
     # ==========================================
     # 大语言模型工具 (LLM Tools)
     # ==========================================
@@ -161,6 +192,8 @@ class LifeMemoryPlugin(Star):
         try:
             if not self.config.get("enabled", True):
                 return "仿真实生活功能已禁用，未记录。"
+            if not self._is_session_enabled(event.unified_msg_origin or ""):
+                return "当前会话未启用生活记忆。"
             text = str(content or "").strip()[:120]
             if not text:
                 return "内容为空，未记录。"
@@ -168,50 +201,51 @@ class LifeMemoryPlugin(Star):
                 return "存储未就绪，记录失败。"
 
             scope_key = self._get_scope_key(event)
-            events = self.store.prune_and_get(scope_key)
-            now_ms = int(time.time() * 1000)
+            async with self.store.get_scope_lock(scope_key):
+                events = self.store.prune_and_get(scope_key)
+                now_ms = int(time.time() * 1000)
 
-            # 检查去重与续期
-            existing = None
-            for e in events:
-                if is_same_event(e.get("text"), text):
-                    existing = e
-                    break
+                # 检查去重与续期
+                existing = None
+                for e in events:
+                    if is_same_event(e.get("text"), text):
+                        existing = e
+                        break
 
-            if existing:
-                existing["touched_at"] = now_ms
-                existing["ongoing"] = bool(existing.get("ongoing")) or bool(ongoing)
-                if len(normalize_text(text)) > len(
-                    normalize_text(str(existing.get("text", "")))
-                ):
-                    existing["text"] = text
+                if existing:
+                    existing["touched_at"] = now_ms
+                    existing["ongoing"] = bool(existing.get("ongoing")) or bool(ongoing)
+                    if len(normalize_text(text)) > len(
+                        normalize_text(str(existing.get("text", "")))
+                    ):
+                        existing["text"] = text
+                    self.store.write_events(scope_key, events)
+                    state = "（进行中）" if existing.get("ongoing") else ""
+                    return f"这条之前记过，已续期：{existing['text']}{state}"
+
+                new_event = {
+                    "id": f"{now_ms}-{uuid.uuid4().hex[:5]}",
+                    "at": now_ms,
+                    "touched_at": now_ms,
+                    "text": text,
+                    "ongoing": bool(ongoing),
+                }
+                events.append(new_event)
                 self.store.write_events(scope_key, events)
-                state = "（进行中）" if existing.get("ongoing") else ""
-                return f"这条之前记过，已续期：{existing['text']}{state}"
-
-            import uuid
-
-            new_event = {
-                "id": f"{now_ms}-{uuid.uuid4().hex[:5]}",
-                "at": now_ms,
-                "touched_at": now_ms,
-                "text": text,
-                "ongoing": bool(ongoing),
-            }
-            events.append(new_event)
-            self.store.write_events(scope_key, events)
-            state = "（进行中）" if ongoing else ""
-            return f"已记下：{text}{state}"
+                state = "（进行中）" if ongoing else ""
+                return f"已记下：{text}{state}"
         except Exception as e:
             logger.error(f"[life-memory] life_note 失败: {e}", exc_info=True)
             return f"记录失败：{e}"
 
     @filter.llm_tool(name="life_recall")
     async def life_recall(self, event: AstrMessageEvent) -> str:
-        """回忆自己最近的生活事件：正在进行的事 + 近期的小事。当你想接上“我之前在做什么/在等什么”时用它，别凭空猜。"""
+        """回忆自己最近的生活事件：正在进行的事 + 近期的小事 + 近日规划脉络。当你想接上“我之前在做什么/在等什么”时用它，别凭空猜。"""
         try:
             if not self.config.get("enabled", True):
                 return "仿真实生活功能已禁用。"
+            if not self._is_session_enabled(event.unified_msg_origin or ""):
+                return "当前会话未启用生活记忆。"
             if not self.store:
                 return "存储未就绪。"
 
@@ -230,9 +264,6 @@ class LifeMemoryPlugin(Star):
                 <= small_ttl_ms
             ]
 
-            if not ongoing and not recent:
-                return "近期没记生活事件（或都已淡忘）。"
-
             parts = []
             if ongoing:
                 parts.append(
@@ -242,6 +273,25 @@ class LifeMemoryPlugin(Star):
                 parts.append(
                     "今天的小事：" + "；".join(str(e.get("text")) for e in recent)
                 )
+
+            # 历史规划脉络参考
+            hist_days = int(self.config.get("history_plan_days", 2))
+            if hist_days > 0:
+                hist_plans = self.store.get_recent_plan_history(
+                    scope_key, limit=hist_days
+                )
+                if hist_plans:
+                    hist_descs = [
+                        f"{time.strftime('%m-%d', time.localtime(float(h.get('date', 0)) / 1000.0))} 做了「{h.get('day', '')}」"
+                        for h in hist_plans
+                        if h.get("day")
+                    ]
+                    if hist_descs:
+                        parts.append("前几日生活：" + "；".join(hist_descs))
+
+            if not parts:
+                return "近期没记生活事件（或都已淡忘）。"
+
             return "\n".join(parts)
         except Exception as e:
             logger.error(f"[life-memory] life_recall 失败: {e}", exc_info=True)
@@ -257,6 +307,8 @@ class LifeMemoryPlugin(Star):
         try:
             if not self.config.get("enabled", True):
                 return "仿真实生活功能已禁用。"
+            if not self._is_session_enabled(event.unified_msg_origin or ""):
+                return "当前会话未启用生活记忆。"
             kw = str(content or "").strip()
             if not kw:
                 return "没有提供关键词。"
@@ -264,28 +316,29 @@ class LifeMemoryPlugin(Star):
                 return "存储未就绪。"
 
             scope_key = self._get_scope_key(event)
-            events = self.store.read_events(scope_key)
-            done_count = 0
-            now_ms = int(time.time() * 1000)
+            async with self.store.get_scope_lock(scope_key):
+                events = self.store.read_events(scope_key)
+                done_count = 0
+                now_ms = int(time.time() * 1000)
 
-            for e in events:
-                if e.get("ongoing") and kw in str(e.get("text", "")):
-                    e["ongoing"] = False
-                    e["ended_at"] = now_ms
-                    done_count += 1
+                for e in events:
+                    if e.get("ongoing") and kw in str(e.get("text", "")):
+                        e["ongoing"] = False
+                        e["ended_at"] = now_ms
+                        done_count += 1
 
-            if done_count > 0:
-                cleaned = prune_events(
-                    events,
-                    small_ttl_hours=float(self.config.get("small_ttl_hours", 24.0)),
-                    ongoing_ttl_hours=float(
-                        self.config.get("ongoing_ttl_hours", 168.0)
-                    ),
-                    max_events=int(self.config.get("max_events", 60)),
-                )
-                self.store.write_events(scope_key, cleaned)
-                return f"已结束 {done_count} 条进行中的事。"
-            return f"没找到包含「{kw}」的进行中的事。"
+                if done_count > 0:
+                    cleaned = prune_events(
+                        events,
+                        small_ttl_hours=float(self.config.get("small_ttl_hours", 24.0)),
+                        ongoing_ttl_hours=float(
+                            self.config.get("ongoing_ttl_hours", 168.0)
+                        ),
+                        max_events=int(self.config.get("max_events", 60)),
+                    )
+                    self.store.write_events(scope_key, cleaned)
+                    return f"已结束 {done_count} 条进行中的事。"
+                return f"没找到包含「{kw}」的进行中的事。"
         except Exception as e:
             logger.error(f"[life-memory] life_done 失败: {e}", exc_info=True)
             return f"结束失败：{e}"
@@ -297,17 +350,25 @@ class LifeMemoryPlugin(Star):
         day: str,
         twist: str = "",
         weather: str = "",
+        outfit: str = "",
+        mood: str = "",
+        location: str = "",
     ) -> str:
         """规划今天的生活。每天第一次上线时记下今天大致做什么。
 
         Args:
-            day(string): 今天大致做什么，一两行说清。
+            day(string): 今天大致做什么，一两行说清（如：上午写稿，下午去超市买菜）。
             twist(string): 今天有没有突发的小事（偶尔有，不是每天，没有就留空）。
             weather(string): 今天天气，可留空。
+            outfit(string): 今天穿搭风格（选填，如：浅色宽松卫衣、舒适运动鞋）。
+            mood(string): 今天心情或心境（选填，如：专注、平静、有些困意）。
+            location(string): 当前主要所在地点（选填，如：家、书房、咖啡馆）。
         """
         try:
             if not self.config.get("enabled", True):
                 return "仿真实生活功能已禁用。"
+            if not self._is_session_enabled(event.unified_msg_origin or ""):
+                return "当前会话未启用生活记忆。"
             day_text = str(day or "").strip()[:200]
             if not day_text:
                 return "未填写规划内容，未记录。"
@@ -315,19 +376,45 @@ class LifeMemoryPlugin(Star):
                 return "存储未就绪。"
 
             scope_key = self._get_scope_key(event)
-            now_ms = int(time.time() * 1000)
-            plan_data = {
-                "date": now_ms,
-                "day": day_text,
-                "twist": str(twist or "").strip()[:80],
-                "weather": str(weather or "").strip()[:40],
-            }
-            self.store.write_plan(scope_key, plan_data)
-            twist_desc = f"（偶发：{plan_data['twist']}）" if plan_data["twist"] else ""
-            weather_desc = (
-                f"（天气：{plan_data['weather']}）" if plan_data["weather"] else ""
-            )
-            return f"已记下今天的规划：{day_text}{twist_desc}{weather_desc}"
+            async with self.store.get_scope_lock(scope_key):
+                now_ms = int(time.time() * 1000)
+                holiday = "无"
+                if bool(self.config.get("enable_holiday", True)):
+                    holiday = get_today_holiday()
+
+                plan_data = {
+                    "date": now_ms,
+                    "day": day_text,
+                    "twist": str(twist or "").strip()[:80],
+                    "weather": str(weather or "").strip()[:40],
+                    "holiday": holiday,
+                }
+                if (
+                    bool(self.config.get("enable_outfit", True))
+                    and str(outfit or "").strip()
+                ):
+                    plan_data["outfit"] = str(outfit).strip()[:60]
+                if str(mood or "").strip():
+                    plan_data["mood"] = str(mood).strip()[:40]
+                if str(location or "").strip():
+                    plan_data["location"] = str(location).strip()[:60]
+
+                self.store.write_plan(scope_key, plan_data)
+
+                extras = []
+                if plan_data.get("twist"):
+                    extras.append(f"偶发：{plan_data['twist']}")
+                if plan_data.get("weather"):
+                    extras.append(f"天气：{plan_data['weather']}")
+                if plan_data.get("outfit"):
+                    extras.append(f"穿搭：{plan_data['outfit']}")
+                if plan_data.get("mood"):
+                    extras.append(f"心情：{plan_data['mood']}")
+                if plan_data.get("holiday") and plan_data["holiday"] != "无":
+                    extras.append(f"节日：🎉 {plan_data['holiday']}")
+
+                extra_desc = f"（{'，'.join(extras)}）" if extras else ""
+                return f"已记下今天的规划：{day_text}{extra_desc}"
         except Exception as e:
             logger.error(f"[life-memory] life_plan 失败: {e}", exc_info=True)
             return f"规划失败：{e}"
@@ -343,6 +430,8 @@ class LifeMemoryPlugin(Star):
         """在请求 LLM 前动态注入生活事件上下文与使用引导。"""
         try:
             if not self.config.get("enabled", True):
+                return
+            if not self._is_session_enabled(event.unified_msg_origin or ""):
                 return
             if not self.store:
                 return
@@ -400,36 +489,70 @@ class LifeMemoryPlugin(Star):
                         f"你今天做过的事（他问到就以此为准，没写的别编）：{items}。"
                     )
 
-            # 4. 今日生活规划
+            # 4. 今日生活规划与当前时段状态
             if today_plan:
+                current_slot, slot_schedule = extract_current_slot_schedule(today_plan)
                 if guide_enabled:
                     plan_lines = [
-                        '【你今天的生活规划（他问"今天打算做什么""今天怎么样"时以这个为底；实际做没做、有没有变化，用 life_note 记实际发生的）】',
-                        f"· {today_plan.get('day', '')}",
+                        f"【你今天的生活规划与基调（当前时段：{current_slot}，聊到相关话题以此为准）】",
+                        f"· 今日规划：{today_plan.get('day', '')}",
                     ]
+                    if slot_schedule and slot_schedule != today_plan.get("day"):
+                        plan_lines.append(f"· 当前{current_slot}安排：{slot_schedule}")
                     if today_plan.get("weather"):
                         plan_lines.append(f"· 天气：{today_plan['weather']}")
                     if today_plan.get("twist"):
                         plan_lines.append(f"· 偶发：{today_plan['twist']}")
+                    if bool(self.config.get("enable_outfit", True)) and today_plan.get(
+                        "outfit"
+                    ):
+                        plan_lines.append(f"· 今日穿搭：{today_plan['outfit']}")
+                    if today_plan.get("mood"):
+                        plan_lines.append(f"· 当前心情：{today_plan['mood']}")
+                    if today_plan.get("location"):
+                        plan_lines.append(f"· 当前地点：{today_plan['location']}")
+                    if (
+                        bool(self.config.get("enable_holiday", True))
+                        and today_plan.get("holiday")
+                        and today_plan["holiday"] != "无"
+                    ):
+                        plan_lines.append(f"· 今日节日：🎉 {today_plan['holiday']}")
                     sections.append("\n".join(plan_lines))
                 else:
-                    twist_part = (
-                        f"；偶发：{today_plan['twist']}"
-                        if today_plan.get("twist")
-                        else ""
-                    )
-                    sections.append(
-                        f"你今天的生活规划：{today_plan.get('day', '')}{twist_part}。"
-                    )
+                    parts_sub = [f"今日规划：{today_plan.get('day', '')}"]
+                    if slot_schedule and slot_schedule != today_plan.get("day"):
+                        parts_sub.append(f"当前{current_slot}正在做：{slot_schedule}")
+                    if today_plan.get("twist"):
+                        parts_sub.append(f"偶发：{today_plan['twist']}")
+                    if bool(self.config.get("enable_outfit", True)) and today_plan.get(
+                        "outfit"
+                    ):
+                        parts_sub.append(f"穿搭：{today_plan['outfit']}")
+                    if today_plan.get("mood"):
+                        parts_sub.append(f"心情：{today_plan['mood']}")
+                    sections.append("；".join(parts_sub) + "。")
             else:
-                # 今天还没规划，注入提醒
+                # 今天还没规划，查询最近历史规划提供承接参考
+                hist_days = int(self.config.get("history_plan_days", 2))
+                hist_ref = ""
+                if hist_days > 0:
+                    hist_plans = self.store.get_recent_plan_history(
+                        scope_key, limit=hist_days
+                    )
+                    if hist_plans and hist_plans[0].get("day"):
+                        hist_ref = f"（参考：昨日规划为「{hist_plans[0]['day']}」）"
+
+                current_slot = get_natural_slot_name(minute_of_day())
                 if guide_enabled:
                     sections.append(
-                        "【今天还没规划】今天是新的一天，你还没规划今天。现在就用 life_plan 记下今天大致做什么"
-                        "（参考：今天天气、你手头进行中的事、你此刻的心绪；偶尔可以有一件突发的小事，不是每天都有）。规划完再回他。"
+                        f"【今天还没规划】现在是{current_slot}，今天是新的一天，你还没规划今天{hist_ref}。"
+                        "现在就用 life_plan 记下今天大致做什么"
+                        "（参考：当前时段、今天天气、你手头进行中的事、你此刻的心绪与穿搭；偶发小事非每天有）。规划完再回他。"
                     )
                 else:
-                    sections.append("今天还没规划：先用 life_plan 记下今天大致做什么。")
+                    sections.append(
+                        f"现在是{current_slot}，今天还没规划{hist_ref}：先用 life_plan 记下今天大致做什么。"
+                    )
 
             if sections:
                 prompt_text = "\n\n".join(sections)
@@ -465,10 +588,14 @@ class LifeMemoryPlugin(Star):
             e for e in events if not e.get("ongoing") and is_today(e.get("at"))
         ]
         has_today_plan = plan and is_today(plan.get("date"))
+        current_minute = minute_of_day()
+        current_slot = get_natural_slot_name(current_minute)
+        now_time_str = f"{current_minute // 60:02d}:{current_minute % 60:02d}"
 
         lines = [
             "【生活记忆状态】",
             f"· 当前作用域: {scope_key}",
+            f"· 当前时间/时段: {now_time_str}（{current_slot}）",
             f"· 事件总数: {len(events)} 条",
             f"· 进行中大事: {len(ongoing)} 条",
             f"· 今日小事: {len(today_events)} 条",
@@ -478,7 +605,15 @@ class LifeMemoryPlugin(Star):
             if plan.get("twist"):
                 lines.append(f"  偶发事件: {plan.get('twist')}")
             if plan.get("weather"):
-                lines.append(f"  天气: {plan.get('weather')}")
+                lines.append(f"  今日天气: {plan.get('weather')}")
+            if plan.get("outfit"):
+                lines.append(f"  今日穿搭: {plan.get('outfit')}")
+            if plan.get("mood"):
+                lines.append(f"  当前心情: {plan.get('mood')}")
+            if plan.get("location"):
+                lines.append(f"  当前地点: {plan.get('location')}")
+            if plan.get("holiday") and plan.get("holiday") != "无":
+                lines.append(f"  今日节日: 🎉 {plan.get('holiday')}")
         else:
             lines.append("· 今日规划: 尚未规划")
 
@@ -536,11 +671,19 @@ class LifeMemoryPlugin(Star):
             e for e in events if not e.get("ongoing") and is_today(e.get("at"))
         ]
         has_today_plan = bool(plan and is_today(plan.get("date")))
+        current_minute = minute_of_day()
+        current_slot = get_natural_slot_name(current_minute)
+        today_holiday = get_today_holiday()
+        history_plans = self.store.get_recent_plan_history(scope_key, limit=5)
 
         return json_response(
             {
                 "storage_scope": str(self.config.get("storage_scope", "session")),
                 "current_scope_key": scope_key,
+                "current_slot": current_slot,
+                "current_time_str": f"{current_minute // 60:02d}:{current_minute % 60:02d}",
+                "today_holiday": today_holiday,
+                "history_plans": history_plans,
                 "scopes": scopes,
                 "events_count": len(events),
                 "ongoing_count": len(ongoing),
@@ -550,6 +693,8 @@ class LifeMemoryPlugin(Star):
                 "ongoing_ttl_hours": float(self.config.get("ongoing_ttl_hours", 168.0)),
                 "enabled": bool(self.config.get("enabled", True)),
                 "inject_guide": bool(self.config.get("inject_guide", True)),
+                "enable_holiday": bool(self.config.get("enable_holiday", True)),
+                "enable_outfit": bool(self.config.get("enable_outfit", True)),
                 "is_today_planned": has_today_plan,
                 "plan": plan if has_today_plan else None,
             }
@@ -580,47 +725,48 @@ class LifeMemoryPlugin(Star):
         ongoing = bool(payload.get("ongoing", False))
         raw_scope = payload.get("scope_key")
         scope_key = self._resolve_scope_key(raw_scope)
-        events = self.store.prune_and_get(scope_key)
-        now_ms = int(time.time() * 1000)
+        async with self.store.get_scope_lock(scope_key):
+            events = self.store.prune_and_get(scope_key)
+            now_ms = int(time.time() * 1000)
 
-        existing = None
-        for e in events:
-            if is_same_event(e.get("text"), content):
-                existing = e
-                break
+            existing = None
+            for e in events:
+                if is_same_event(e.get("text"), content):
+                    existing = e
+                    break
 
-        if existing:
-            existing["touched_at"] = now_ms
-            existing["ongoing"] = bool(existing.get("ongoing")) or ongoing
-            if len(normalize_text(content)) > len(
-                normalize_text(str(existing.get("text", "")))
-            ):
-                existing["text"] = content
+            if existing:
+                existing["touched_at"] = now_ms
+                existing["ongoing"] = bool(existing.get("ongoing")) or ongoing
+                if len(normalize_text(content)) > len(
+                    normalize_text(str(existing.get("text", "")))
+                ):
+                    existing["text"] = content
+                self.store.write_events(scope_key, events)
+                return json_response(
+                    {
+                        "status": "renewed",
+                        "event": existing,
+                        "message": "相似事件已存在，已自动续期触碰时间",
+                    }
+                )
+
+            new_event = {
+                "id": f"{now_ms}-{uuid.uuid4().hex[:5]}",
+                "at": now_ms,
+                "touched_at": now_ms,
+                "text": content,
+                "ongoing": ongoing,
+            }
+            events.append(new_event)
             self.store.write_events(scope_key, events)
             return json_response(
                 {
-                    "status": "renewed",
-                    "event": existing,
-                    "message": "相似事件已存在，已自动续期触碰时间",
+                    "status": "created",
+                    "event": new_event,
+                    "message": "事件已成功记录",
                 }
             )
-
-        new_event = {
-            "id": f"{now_ms}-{uuid.uuid4().hex[:5]}",
-            "at": now_ms,
-            "touched_at": now_ms,
-            "text": content,
-            "ongoing": ongoing,
-        }
-        events.append(new_event)
-        self.store.write_events(scope_key, events)
-        return json_response(
-            {
-                "status": "created",
-                "event": new_event,
-                "message": "事件已成功记录",
-            }
-        )
 
     async def api_dashboard_done_event(self):
         """Dashboard 标记事件结束接口。"""
@@ -632,10 +778,11 @@ class LifeMemoryPlugin(Star):
             return error_response("缺少事件 ID", status_code=400)
         raw_scope = payload.get("scope_key")
         scope_key = self._resolve_scope_key(raw_scope)
-        ok = self.store.mark_event_done(scope_key, event_id)
-        if ok:
-            return json_response({"success": True, "message": "事件已标记结束"})
-        return error_response("未找到该进行中事件或已结束", status_code=404)
+        async with self.store.get_scope_lock(scope_key):
+            ok = self.store.mark_event_done(scope_key, event_id)
+            if ok:
+                return json_response({"success": True, "message": "事件已标记结束"})
+            return error_response("未找到该进行中事件或已结束", status_code=404)
 
     async def api_dashboard_delete_event(self):
         """Dashboard 删除指定事件接口。"""
@@ -647,10 +794,11 @@ class LifeMemoryPlugin(Star):
             return error_response("缺少事件 ID", status_code=400)
         raw_scope = payload.get("scope_key")
         scope_key = self._resolve_scope_key(raw_scope)
-        ok = self.store.delete_event(scope_key, event_id)
-        if ok:
-            return json_response({"success": True, "message": "事件已删除"})
-        return error_response("未找到该事件", status_code=404)
+        async with self.store.get_scope_lock(scope_key):
+            ok = self.store.delete_event(scope_key, event_id)
+            if ok:
+                return json_response({"success": True, "message": "事件已删除"})
+            return error_response("未找到该事件", status_code=404)
 
     async def api_dashboard_save_plan(self):
         """Dashboard 保存今日规划接口。"""
@@ -662,23 +810,36 @@ class LifeMemoryPlugin(Star):
             return error_response("规划内容不能为空", status_code=400)
         twist = str(payload.get("twist", "")).strip()[:80]
         weather = str(payload.get("weather", "")).strip()[:40]
+        outfit = str(payload.get("outfit", "")).strip()[:60]
+        mood = str(payload.get("mood", "")).strip()[:40]
+        location = str(payload.get("location", "")).strip()[:60]
+        holiday = str(payload.get("holiday", "")).strip()[:40] or get_today_holiday()
         raw_scope = payload.get("scope_key")
         scope_key = self._resolve_scope_key(raw_scope)
-        now_ms = int(time.time() * 1000)
-        plan_data = {
-            "date": now_ms,
-            "day": day,
-            "twist": twist,
-            "weather": weather,
-        }
-        self.store.write_plan(scope_key, plan_data)
-        return json_response(
-            {
-                "success": True,
-                "plan": plan_data,
-                "message": "今日规划已成功更新",
+        async with self.store.get_scope_lock(scope_key):
+            now_ms = int(time.time() * 1000)
+            plan_data = {
+                "date": now_ms,
+                "day": day,
+                "twist": twist,
+                "weather": weather,
+                "holiday": holiday,
             }
-        )
+            if outfit:
+                plan_data["outfit"] = outfit
+            if mood:
+                plan_data["mood"] = mood
+            if location:
+                plan_data["location"] = location
+
+            self.store.write_plan(scope_key, plan_data)
+            return json_response(
+                {
+                    "success": True,
+                    "plan": plan_data,
+                    "message": "今日规划已成功更新",
+                }
+            )
 
     async def api_dashboard_clear(self):
         """Dashboard 清空作用域数据接口。"""
@@ -687,10 +848,11 @@ class LifeMemoryPlugin(Star):
         payload = await request.json(default={})
         raw_scope = payload.get("scope_key")
         scope_key = self._resolve_scope_key(raw_scope)
-        self.store.clear(scope_key)
-        return json_response(
-            {
-                "success": True,
-                "message": f"已清空作用域 [{scope_key}] 的所有生活数据",
-            }
-        )
+        async with self.store.get_scope_lock(scope_key):
+            self.store.clear(scope_key)
+            return json_response(
+                {
+                    "success": True,
+                    "message": f"已清空作用域 [{scope_key}] 的所有生活数据",
+                }
+            )

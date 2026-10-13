@@ -9,15 +9,188 @@
 
 from __future__ import annotations
 
+import asyncio
+import datetime
 import json
 import os
 import re
 import time
 import unicodedata
 import uuid
+import zoneinfo
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
+CHINA_TIMEZONE = zoneinfo.ZoneInfo("Asia/Shanghai")
+
+# 8 个自然时段映射（左闭右开，基于一天中 0~1440 的分钟数）
+NATURAL_SLOTS: dict[str, tuple[int, int]] = {
+    "凌晨": (0, 6 * 60),  # 00:00 - 06:00
+    "早上": (6 * 60, 9 * 60),  # 06:00 - 09:00
+    "上午": (9 * 60, 12 * 60),  # 09:00 - 12:00
+    "中午": (12 * 60, 14 * 60),  # 12:00 - 14:00
+    "下午": (14 * 60, 18 * 60),  # 14:00 - 18:00
+    "傍晚": (18 * 60, 20 * 60),  # 18:00 - 20:00
+    "晚上": (20 * 60, 23 * 60),  # 20:00 - 23:00
+    "深夜": (23 * 60, 24 * 60),  # 23:00 - 24:00
+}
+
+NATURAL_SLOT_NAMES: tuple[str, ...] = tuple(NATURAL_SLOTS.keys())
+
+_TIME_RANGE_RE = re.compile(r"(\d{1,2}):(\d{2})\s*[-–—~]\s*(\d{1,2}):(\d{2})")
+
+# 可选生活状态多维属性注册表（注册表模式）
+OPTIONAL_LIFE_FIELDS: dict[str, dict[str, str]] = {
+    "outfit": {
+        "label": "今日穿搭",
+        "icon": "👔",
+        "desc": "角色当天的外貌穿着或穿搭风格",
+    },
+    "mood": {
+        "label": "当前心情",
+        "icon": "🙂",
+        "desc": "角色此刻的心绪与精神状态",
+    },
+    "location": {
+        "label": "当前地点",
+        "icon": "📍",
+        "desc": "角色当前所处的位置或场所",
+    },
+    "holiday": {
+        "label": "今日节日",
+        "icon": "🎉",
+        "desc": "当天对应的法定或传统节日",
+    },
+}
+
+
+def minute_of_day(now_dt: datetime.datetime | None = None) -> int:
+    """返回一天中的分钟数 (0~1439)。"""
+    if now_dt is None:
+        try:
+            now_dt = datetime.datetime.now(CHINA_TIMEZONE)
+        except Exception:
+            now_dt = datetime.datetime.now()
+    return now_dt.hour * 60 + now_dt.minute
+
+
+def get_natural_slot_name(minute: int) -> str:
+    """根据一天中的分钟数 (0~1439) 返回所属的自然时段名。"""
+    clamped = max(0, min(1439, int(minute)))
+    for slot_name, (start, end) in NATURAL_SLOTS.items():
+        if start <= clamped < end:
+            return slot_name
+    return "上午"
+
+
+def parse_time_slot(time_str: str) -> tuple[int, int] | None:
+    """解析时间区间字符串或自然时段名，返回起止分钟数。"""
+    val = str(time_str or "").strip()
+    match = _TIME_RANGE_RE.fullmatch(val)
+    if match:
+        sh, sm, eh, em = map(int, match.groups())
+        if 0 <= sh <= 23 and 0 <= sm <= 59 and 0 <= eh <= 24 and 0 <= em <= 59:
+            start = sh * 60 + sm
+            end = eh * 60 + em
+            if start < end:
+                return (start, min(1440, end))
+    for keyword, interval in NATURAL_SLOTS.items():
+        if keyword in val:
+            return interval
+    return None
+
+
+def extract_current_slot_schedule(
+    plan: dict[str, Any] | None,
+    now_dt: datetime.datetime | None = None,
+) -> tuple[str, str]:
+    """从今日规划中提取当前时段及其具体安排。
+
+    Args:
+        plan: 规划数据字典。
+        now_dt: 当前日期时间，缺省为当前北京时间。
+
+    Returns:
+        (当前时段名称, 当前时段具体安排)。
+    """
+    minute = minute_of_day(now_dt)
+    current_slot = get_natural_slot_name(minute)
+    if not plan or not isinstance(plan, dict):
+        return current_slot, ""
+
+    timeline = plan.get("timeline")
+    if isinstance(timeline, list) and timeline:
+        # 1. 优先匹配具体精确时间区间
+        for item in timeline:
+            if not isinstance(item, dict):
+                continue
+            time_label = str(item.get("time") or "").strip()
+            interval = parse_time_slot(time_label)
+            if interval and interval[0] <= minute < interval[1]:
+                desc = str(item.get("schedule") or item.get("desc") or "").strip()
+                if desc:
+                    return time_label, desc
+        # 2. 匹配自然时段关键字
+        for item in timeline:
+            if not isinstance(item, dict):
+                continue
+            time_label = str(item.get("time") or "").strip()
+            if current_slot in time_label:
+                desc = str(item.get("schedule") or item.get("desc") or "").strip()
+                if desc:
+                    return current_slot, desc
+
+    # 3. 若无 timeline 条目，回退返回当前时段及整日概要
+    return current_slot, str(plan.get("day") or "").strip()
+
+
+def get_today_holiday(target_date: datetime.date | None = None) -> str:
+    """获取指定日期的中国传统/法定节日名称。
+
+    优先使用 holidays 库；未安装或查询失败时使用内置常用节日映射表安全降级。
+
+    Args:
+        target_date: 目标公历日期，缺省为今日。
+
+    Returns:
+        节日名称，非节日时返回 "无"。
+    """
+    if target_date is None:
+        try:
+            target_date = datetime.datetime.now(CHINA_TIMEZONE).date()
+        except Exception:
+            target_date = datetime.date.today()
+
+    # 1. 尝试使用 holidays 库
+    try:
+        import holidays
+
+        cn_holidays = holidays.country_holidays(
+            "CN",
+            years=target_date.year,
+            observed=False,
+            language="zh_CN",
+        )
+        holiday_name = cn_holidays.get(target_date)
+        if holiday_name:
+            return str(holiday_name).strip()
+    except Exception:
+        pass
+
+    # 2. 内置公历常用节日表安全降级
+    month_day = f"{target_date.month:02d}-{target_date.day:02d}"
+    fixed_holidays = {
+        "01-01": "元旦",
+        "03-08": "妇女节",
+        "05-01": "劳动节",
+        "05-04": "青年节",
+        "06-01": "儿童节",
+        "09-10": "教师节",
+        "10-01": "国庆节",
+        "12-25": "圣诞节",
+    }
+    return fixed_holidays.get(month_day, "无")
 
 
 def normalize_text(text: str | None) -> str:
@@ -218,11 +391,67 @@ class LifeStore:
         """
         self.root_dir = Path(root_dir).resolve()
         self._get_config = get_config_func or (lambda: {})
+        self._locks: dict[str, asyncio.Lock] = {}
+        self._failure_counts: dict[str, int] = {}
+
+    def get_scope_lock(self, scope_key: str | None) -> asyncio.Lock:
+        """获取指定作用域的异步互斥锁。
+
+        Args:
+            scope_key: 作用域标识。
+
+        Returns:
+            asyncio.Lock 实例。
+        """
+        safe = self.get_safe_key(scope_key)
+        if safe not in self._locks:
+            self._locks[safe] = asyncio.Lock()
+        return self._locks[safe]
+
+    def record_failure(self, scope_key: str | None) -> int:
+        """记录一次生成失败，并返回当前失败累计次数。
+
+        Args:
+            scope_key: 作用域标识。
+
+        Returns:
+            累计失败次数。
+        """
+        safe = self.get_safe_key(scope_key)
+        self._failure_counts[safe] = self._failure_counts.get(safe, 0) + 1
+        return self._failure_counts[safe]
+
+    def reset_failure(self, scope_key: str | None) -> None:
+        """重置指定作用域的失败计数。
+
+        Args:
+            scope_key: 作用域标识。
+        """
+        safe = self.get_safe_key(scope_key)
+        self._failure_counts[safe] = 0
+
+    def is_circuit_broken(self, scope_key: str | None, max_failures: int = 3) -> bool:
+        """检查指定作用域是否已达到失败熔断阈值。
+
+        Args:
+            scope_key: 作用域标识。
+            max_failures: 最大允许连续失败次数。
+
+        Returns:
+            若已熔断返回 True，否则返回 False。
+        """
+        safe = self.get_safe_key(scope_key)
+        return self._failure_counts.get(safe, 0) >= max(1, int(max_failures))
+
+    def get_history_dir(self) -> Path:
+        """获取历史规划归档目录。"""
+        return self.root_dir / "history"
 
     def ensure_dir(self) -> None:
-        """确保存储根目录存在。"""
+        """确保存储根目录与历史归档目录存在。"""
         try:
             self.root_dir.mkdir(parents=True, exist_ok=True)
+            self.get_history_dir().mkdir(parents=True, exist_ok=True)
         except Exception:
             pass
 
@@ -319,8 +548,81 @@ class LifeStore:
         except Exception:
             return None
 
+    def _archive_old_plan(
+        self, scope_key: str | None, old_plan: dict[str, Any]
+    ) -> None:
+        """将旧规划归档到历史目录中并保留最近 7 天。
+
+        Args:
+            scope_key: 作用域标识。
+            old_plan: 历史规划字典。
+        """
+        try:
+            ts = float(old_plan.get("date") or 0)
+            if ts <= 0:
+                return
+            old_dt_str = time.strftime("%Y%m%d", time.localtime(ts / 1000.0))
+            safe = self.get_safe_key(scope_key)
+            hist_dir = self.get_history_dir()
+            hist_dir.mkdir(parents=True, exist_ok=True)
+            hist_file = hist_dir / f"{safe}_{old_dt_str}.json"
+            hist_file.write_text(
+                json.dumps(old_plan, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
+            # 清理超出 7 天的旧归档
+            prefix = f"{safe}_"
+            matched_files: list[tuple[str, Path]] = []
+            for item in hist_dir.iterdir():
+                if item.name.startswith(prefix) and item.name.endswith(".json"):
+                    matched_files.append((item.name, item))
+            matched_files.sort(key=lambda x: x[0], reverse=True)
+            for _, expired in matched_files[7:]:
+                try:
+                    expired.unlink()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def get_recent_plan_history(
+        self, scope_key: str | None, limit: int = 2
+    ) -> list[dict[str, Any]]:
+        """读取指定作用域最近的历史规划归档。
+
+        Args:
+            scope_key: 作用域标识。
+            limit: 最多返回的历史规划天数。
+
+        Returns:
+            历史规划列表，按日期从新到旧排列。
+        """
+        try:
+            hist_dir = self.get_history_dir()
+            if not hist_dir.exists():
+                return []
+            safe = self.get_safe_key(scope_key)
+            prefix = f"{safe}_"
+            matched_files: list[tuple[str, Path]] = []
+            for item in hist_dir.iterdir():
+                if item.name.startswith(prefix) and item.name.endswith(".json"):
+                    matched_files.append((item.name, item))
+            matched_files.sort(key=lambda x: x[0], reverse=True)
+            result: list[dict[str, Any]] = []
+            for _, path in matched_files[: max(1, limit)]:
+                try:
+                    raw = json.loads(path.read_text(encoding="utf-8"))
+                    if isinstance(raw, dict):
+                        result.append(raw)
+                except Exception:
+                    pass
+            return result
+        except Exception:
+            return []
+
     def write_plan(self, scope_key: str | None, plan: dict[str, Any]) -> bool:
-        """原子写入生活规划。
+        """原子写入生活规划，并在跨天时自动归档旧规划。
 
         Args:
             scope_key: 作用域标识。
@@ -331,6 +633,11 @@ class LifeStore:
         """
         try:
             self.ensure_dir()
+            # 检查是否有昨天的旧规划，若有则自动归档
+            old_plan = self.read_plan(scope_key)
+            if old_plan and not is_today(old_plan.get("date")):
+                self._archive_old_plan(scope_key, old_plan)
+
             target_path = self.get_plan_file(scope_key)
             tmp_path = target_path.with_suffix(
                 f".tmp.{os.getpid()}_{uuid.uuid4().hex[:6]}"
