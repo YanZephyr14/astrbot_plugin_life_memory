@@ -1,4 +1,4 @@
-const bridge = window.AstrBotPluginView;
+const bridge = window.AstrBotPluginPage || window.AstrBotPluginView;
 
 // 状态管理
 let currentScopeKey = "";
@@ -375,11 +375,13 @@ async function refreshAll() {
 // 初始化 bridge 与页面
 async function init() {
   try {
-    await bridge.ready();
+    if (bridge && typeof bridge.ready === "function") {
+      await bridge.ready();
+    }
     await refreshAll();
   } catch (e) {
     console.error("Bridge ready failed:", e);
-    // 即使不在 iframe 中也尝试拉取
+    // 即使降级环境也尝试拉取
     await refreshAll();
   }
 }
