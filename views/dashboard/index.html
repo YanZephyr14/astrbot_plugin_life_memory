@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>仿真实生活控制台</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="dashboard-container">
+      <!-- 顶部 Header -->
+      <header class="header">
+        <div class="header-title">
+          <span style="font-size: 24px;">🌱</span>
+          <h1>仿真实生活控制台</h1>
+        </div>
+        <div class="header-actions">
+          <label for="scopeSelect" style="font-size: 13px; color: var(--text-secondary);">作用域：</label>
+          <select id="scopeSelect" class="select-scope"></select>
+          <button id="btnRefresh" class="btn btn-outline" title="刷新数据">
+            <span>🔄</span> 刷新
+          </button>
+          <button id="btnClear" class="btn btn-danger-outline" title="清空当前会话数据">
+            <span>🗑️</span> 清空
+          </button>
+        </div>
+      </header>
+
+      <!-- 概览指标卡片 -->
+      <section class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-header">
+            <span>今日规划状态</span>
+            <span id="badgePlanStatus" class="badge">检查中</span>
+          </div>
+          <div class="stat-value" id="statPlanSummary">-</div>
+          <div class="stat-footer" id="statPlanDetail">每天第一次上线规划</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-header">
+            <span>进行中的大事</span>
+            <span>⏳</span>
+          </div>
+          <div class="stat-value" id="statOngoingCount">0</div>
+          <div class="stat-footer">长期跨轮保留，主动结束或 7 天兜底</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-header">
+            <span>今天发生的小事</span>
+            <span>☕</span>
+          </div>
+          <div class="stat-value" id="statTodayCount">0</div>
+          <div class="stat-footer">保留 24 小时，隔天自动淡忘</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-header">
+            <span>事件池容量</span>
+            <span>📚</span>
+          </div>
+          <div class="stat-value" id="statEventsCount">0 / 60</div>
+          <div class="stat-footer" id="statScopeDesc">作用域: session</div>
+        </div>
+      </section>
+
+      <!-- 今日规划板块 -->
+      <section class="section-panel">
+        <div class="section-header">
+          <div class="section-title">
+            <span>📝</span>
+            <span>今日生活规划 (Daily Plan)</span>
+          </div>
+          <button id="btnTogglePlanEdit" class="btn btn-outline btn-sm">编辑规划</button>
+        </div>
+
+        <div id="planDisplay" class="plan-display">
+          <div class="plan-row">
+            <span class="plan-label">今日安排:</span>
+            <span id="planDay" class="plan-content">（今天尚未进行生活规划）</span>
+          </div>
+          <div class="plan-row" id="planTwistRow" style="display: none;">
+            <span class="plan-label">偶发事件:</span>
+            <span id="planTwist" class="plan-content">-</span>
+          </div>
+          <div class="plan-row" id="planWeatherRow" style="display: none;">
+            <span class="plan-label">今日天气:</span>
+            <span id="planWeather" class="plan-content">-</span>
+          </div>
+        </div>
+
+        <!-- 规划编辑表单 (默认折叠) -->
+        <div id="planEditForm" style="display: none;">
+          <div class="form-group">
+            <label class="form-label" for="inputPlanDay">今天大致做什么（一两句说清）：</label>
+            <input type="text" id="inputPlanDay" class="input-text" placeholder="例：上午写稿，下午去超市买菜，傍晚沿江散步" />
+          </div>
+          <div style="display: flex; gap: 14px; flex-wrap: wrap;">
+            <div class="form-group" style="flex: 1; min-width: 200px;">
+              <label class="form-label" for="inputPlanTwist">偶发小事（选填，偶尔发生）：</label>
+              <input type="text" id="inputPlanTwist" class="input-text" placeholder="例：猫打翻了水杯 / 有点小感冒" />
+            </div>
+            <div class="form-group" style="flex: 1; min-width: 200px;">
+              <label class="form-label" for="inputPlanWeather">今日天气（选填）：</label>
+              <input type="text" id="inputPlanWeather" class="input-text" placeholder="例：多云转晴，微风" />
+            </div>
+          </div>
+          <div style="display: flex; justify-content: flex-end; gap: 8px;">
+            <button id="btnCancelPlan" class="btn btn-outline btn-sm">取消</button>
+            <button id="btnSavePlan" class="btn btn-primary btn-sm">保存规划</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 生活事件管理板块 -->
+      <section class="section-panel">
+        <div class="section-header">
+          <div class="section-title">
+            <span>🕰️</span>
+            <span>生活事件流 (Life Events Timeline)</span>
+          </div>
+        </div>
+
+        <!-- 快速添加事件栏 -->
+        <div class="add-event-bar">
+          <input type="text" id="inputEventText" class="input-text" placeholder="记录一条生活事件（如：今天中午煮了牛肉面 / 在等一个快递）..." />
+          <label class="checkbox-label">
+            <input type="checkbox" id="checkOngoing" />
+            <span>进行中（长期大事）</span>
+          </label>
+          <button id="btnAddEvent" class="btn btn-primary">
+            <span>➕</span> 记录事件
+          </button>
+        </div>
+
+        <!-- 过滤 Tabs -->
+        <div class="tabs">
+          <div class="tab-item active" data-filter="all">全部事件 (<span id="countAll">0</span>)</div>
+          <div class="tab-item" data-filter="ongoing">进行中 (<span id="countOngoing">0</span>)</div>
+          <div class="tab-item" data-filter="today">今天发生 (<span id="countToday">0</span>)</div>
+          <div class="tab-item" data-filter="done">已结束/历史 (<span id="countDone">0</span>)</div>
+        </div>
+
+        <!-- 事件列表容器 -->
+        <div id="eventsContainer" class="events-list">
+          <div class="empty-state">正在加载生活记忆...</div>
+        </div>
+      </section>
+    </div>
+
+    <!-- 浮层 Toast -->
+    <div id="toast" class="toast"></div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

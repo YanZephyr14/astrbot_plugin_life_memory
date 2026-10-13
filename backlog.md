@@ -31,3 +31,12 @@
   - [x] 编写完整中英用户文档 `README.md`
   - [x] 在插件目录初始化 Git 仓库并完成初始版本 Commit
   - [x] 在根目录 `DEVLOG.md` 追加记录更新详情
+
+- [x] **Phase 6: WebUI 可视化控制台 (Dashboard View) 开发**
+  - [x] 查阅 `docs/zh/dev/star/guides/plugin-pages.md` 视图与 API 规范
+  - [x] 实现 7 个后端 Web API 接口（概览、事件列表、录入、完成、删除、保存规划、清空）
+  - [x] 构建 `views/dashboard/` 前端页面 (`index.html`, `style.css`, `app.js`)
+  - [x] 适配暗色与亮色自适应主题，实现指标统计卡片、今日规划卡片与事件流管理
+  - [x] 添加 i18n 视图元数据声明 (`.astrbot-plugin/i18n/zh-CN.json`)
+  - [x] 编写并运行 Dashboard API 单元测试通过 (12/12 passed)
+  - [x] 推送最新功能至 GitHub 远程仓库

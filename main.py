@@ -9,12 +9,14 @@
 from __future__ import annotations
 
 import time
+import uuid
 from pathlib import Path
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import Context, Star
+from astrbot.api.web import error_response, json_response, request
 from astrbot.core.agent.message import TextPart
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
@@ -34,6 +36,8 @@ except ImportError:
         normalize_text,
         prune_events,
     )
+
+PLUGIN_NAME = "astrbot_plugin_life_memory"
 
 USAGE_GUIDE = (
     "【生活事件记忆（你自己的日子）】\n"
@@ -61,6 +65,50 @@ class LifeMemoryPlugin(Star):
         super().__init__(context)
         self.config = config
         self.store: LifeStore | None = None
+
+        # 注册 Dashboard 可视化视图后端 Web API
+        context.register_web_api(
+            f"/{PLUGIN_NAME}/dashboard/overview",
+            self.api_dashboard_overview,
+            ["GET"],
+            "Get dashboard overview data",
+        )
+        context.register_web_api(
+            f"/{PLUGIN_NAME}/dashboard/events",
+            self.api_dashboard_events,
+            ["GET"],
+            "Get events list",
+        )
+        context.register_web_api(
+            f"/{PLUGIN_NAME}/dashboard/event/add",
+            self.api_dashboard_add_event,
+            ["POST"],
+            "Add a life event",
+        )
+        context.register_web_api(
+            f"/{PLUGIN_NAME}/dashboard/event/done",
+            self.api_dashboard_done_event,
+            ["POST"],
+            "Mark a life event as done",
+        )
+        context.register_web_api(
+            f"/{PLUGIN_NAME}/dashboard/event/delete",
+            self.api_dashboard_delete_event,
+            ["POST"],
+            "Delete a life event",
+        )
+        context.register_web_api(
+            f"/{PLUGIN_NAME}/dashboard/plan/save",
+            self.api_dashboard_save_plan,
+            ["POST"],
+            "Save today life plan",
+        )
+        context.register_web_api(
+            f"/{PLUGIN_NAME}/dashboard/clear",
+            self.api_dashboard_clear,
+            ["POST"],
+            "Clear all data for a scope",
+        )
 
     async def initialize(self) -> None:
         """异步初始化插件，准备存储目录与数据连接。"""
@@ -457,3 +505,192 @@ class LifeMemoryPlugin(Star):
         scope_key = self._get_scope_key(event)
         self.store.clear(scope_key)
         yield event.plain_result(f"已清空作用域 [{scope_key}] 的所有生活事件与规划。")
+
+    # ==========================================
+    # 可视化视图后端 Web API Handlers
+    # ==========================================
+
+    def _resolve_scope_key(self, raw_scope: str | None = None) -> str:
+        """解析当前 Dashboard 请求的目标作用域标识。"""
+        scope_setting = str(self.config.get("storage_scope", "session")).lower()
+        if scope_setting == "global":
+            return "__global__"
+        if raw_scope and str(raw_scope).strip():
+            safe = str(raw_scope).strip()
+            return self.store.get_safe_key(safe) if self.store else safe
+        return "__default__"
+
+    async def api_dashboard_overview(self):
+        """Dashboard 数据概览接口。"""
+        if not self.store:
+            return error_response("存储未初始化", status_code=500)
+        raw_scope = request.query.get("scope_key")
+        scope_key = self._resolve_scope_key(raw_scope)
+        scopes = self.store.list_scopes()
+        if scope_key not in scopes and scope_key:
+            scopes.insert(0, scope_key)
+        events = self.store.prune_and_get(scope_key)
+        plan = self.store.read_plan(scope_key)
+        ongoing = [e for e in events if e.get("ongoing")]
+        today_events = [
+            e for e in events if not e.get("ongoing") and is_today(e.get("at"))
+        ]
+        has_today_plan = bool(plan and is_today(plan.get("date")))
+
+        return json_response(
+            {
+                "storage_scope": str(self.config.get("storage_scope", "session")),
+                "current_scope_key": scope_key,
+                "scopes": scopes,
+                "events_count": len(events),
+                "ongoing_count": len(ongoing),
+                "today_count": len(today_events),
+                "max_events": int(self.config.get("max_events", 60)),
+                "small_ttl_hours": float(self.config.get("small_ttl_hours", 24.0)),
+                "ongoing_ttl_hours": float(self.config.get("ongoing_ttl_hours", 168.0)),
+                "enabled": bool(self.config.get("enabled", True)),
+                "inject_guide": bool(self.config.get("inject_guide", True)),
+                "is_today_planned": has_today_plan,
+                "plan": plan if has_today_plan else None,
+            }
+        )
+
+    async def api_dashboard_events(self):
+        """Dashboard 事件列表接口。"""
+        if not self.store:
+            return error_response("存储未初始化", status_code=500)
+        raw_scope = request.query.get("scope_key")
+        scope_key = self._resolve_scope_key(raw_scope)
+        events = self.store.prune_and_get(scope_key)
+        result = []
+        for e in reversed(events):
+            item = dict(e)
+            item["is_today"] = is_today(e.get("at"))
+            result.append(item)
+        return json_response({"events": result, "scope_key": scope_key})
+
+    async def api_dashboard_add_event(self):
+        """Dashboard 手动新增生活事件接口。"""
+        if not self.store:
+            return error_response("存储未初始化", status_code=500)
+        payload = await request.json(default={})
+        content = str(payload.get("content", "")).strip()[:120]
+        if not content:
+            return error_response("事件内容不能为空", status_code=400)
+        ongoing = bool(payload.get("ongoing", False))
+        raw_scope = payload.get("scope_key")
+        scope_key = self._resolve_scope_key(raw_scope)
+        events = self.store.prune_and_get(scope_key)
+        now_ms = int(time.time() * 1000)
+
+        existing = None
+        for e in events:
+            if is_same_event(e.get("text"), content):
+                existing = e
+                break
+
+        if existing:
+            existing["touched_at"] = now_ms
+            existing["ongoing"] = bool(existing.get("ongoing")) or ongoing
+            if len(normalize_text(content)) > len(
+                normalize_text(str(existing.get("text", "")))
+            ):
+                existing["text"] = content
+            self.store.write_events(scope_key, events)
+            return json_response(
+                {
+                    "status": "renewed",
+                    "event": existing,
+                    "message": "相似事件已存在，已自动续期触碰时间",
+                }
+            )
+
+        new_event = {
+            "id": f"{now_ms}-{uuid.uuid4().hex[:5]}",
+            "at": now_ms,
+            "touched_at": now_ms,
+            "text": content,
+            "ongoing": ongoing,
+        }
+        events.append(new_event)
+        self.store.write_events(scope_key, events)
+        return json_response(
+            {
+                "status": "created",
+                "event": new_event,
+                "message": "事件已成功记录",
+            }
+        )
+
+    async def api_dashboard_done_event(self):
+        """Dashboard 标记事件结束接口。"""
+        if not self.store:
+            return error_response("存储未初始化", status_code=500)
+        payload = await request.json(default={})
+        event_id = str(payload.get("event_id", "")).strip()
+        if not event_id:
+            return error_response("缺少事件 ID", status_code=400)
+        raw_scope = payload.get("scope_key")
+        scope_key = self._resolve_scope_key(raw_scope)
+        ok = self.store.mark_event_done(scope_key, event_id)
+        if ok:
+            return json_response({"success": True, "message": "事件已标记结束"})
+        return error_response("未找到该进行中事件或已结束", status_code=404)
+
+    async def api_dashboard_delete_event(self):
+        """Dashboard 删除指定事件接口。"""
+        if not self.store:
+            return error_response("存储未初始化", status_code=500)
+        payload = await request.json(default={})
+        event_id = str(payload.get("event_id", "")).strip()
+        if not event_id:
+            return error_response("缺少事件 ID", status_code=400)
+        raw_scope = payload.get("scope_key")
+        scope_key = self._resolve_scope_key(raw_scope)
+        ok = self.store.delete_event(scope_key, event_id)
+        if ok:
+            return json_response({"success": True, "message": "事件已删除"})
+        return error_response("未找到该事件", status_code=404)
+
+    async def api_dashboard_save_plan(self):
+        """Dashboard 保存今日规划接口。"""
+        if not self.store:
+            return error_response("存储未初始化", status_code=500)
+        payload = await request.json(default={})
+        day = str(payload.get("day", "")).strip()[:200]
+        if not day:
+            return error_response("规划内容不能为空", status_code=400)
+        twist = str(payload.get("twist", "")).strip()[:80]
+        weather = str(payload.get("weather", "")).strip()[:40]
+        raw_scope = payload.get("scope_key")
+        scope_key = self._resolve_scope_key(raw_scope)
+        now_ms = int(time.time() * 1000)
+        plan_data = {
+            "date": now_ms,
+            "day": day,
+            "twist": twist,
+            "weather": weather,
+        }
+        self.store.write_plan(scope_key, plan_data)
+        return json_response(
+            {
+                "success": True,
+                "plan": plan_data,
+                "message": "今日规划已成功更新",
+            }
+        )
+
+    async def api_dashboard_clear(self):
+        """Dashboard 清空作用域数据接口。"""
+        if not self.store:
+            return error_response("存储未初始化", status_code=500)
+        payload = await request.json(default={})
+        raw_scope = payload.get("scope_key")
+        scope_key = self._resolve_scope_key(raw_scope)
+        self.store.clear(scope_key)
+        return json_response(
+            {
+                "success": True,
+                "message": f"已清空作用域 [{scope_key}] 的所有生活数据",
+            }
+        )

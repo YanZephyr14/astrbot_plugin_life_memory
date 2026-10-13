@@ -384,3 +384,72 @@ class LifeStore:
             return True
         except Exception:
             return False
+
+    def list_scopes(self) -> list[str]:
+        """列出当前存在数据的所有作用域标识列表。
+
+        Returns:
+            作用域 safe_key 列表。
+        """
+        try:
+            if not self.root_dir.exists():
+                return []
+            scopes: set[str] = set()
+            for item in self.root_dir.glob("*.json"):
+                name = item.name
+                if name.endswith(".plan.json"):
+                    key = name[:-10]
+                    scopes.add(key)
+                elif not name.startswith(".") and ".tmp" not in name:
+                    key = name[:-5]
+                    scopes.add(key)
+            return sorted(scopes)
+        except Exception:
+            return []
+
+    def delete_event(self, scope_key: str | None, event_id: str) -> bool:
+        """按 ID 删除指定作用域中的某条事件。
+
+        Args:
+            scope_key: 作用域标识。
+            event_id: 事件唯一标识。
+
+        Returns:
+            是否成功找到并删除。
+        """
+        try:
+            events = self.read_events(scope_key)
+            new_events = [e for e in events if str(e.get("id")) != str(event_id)]
+            if len(new_events) != len(events):
+                self.write_events(scope_key, new_events)
+                return True
+            return False
+        except Exception:
+            return False
+
+    def mark_event_done(self, scope_key: str | None, event_id: str) -> bool:
+        """按 ID 将指定作用域中的某条事件标记为结束。
+
+        Args:
+            scope_key: 作用域标识。
+            event_id: 事件唯一标识。
+
+        Returns:
+            是否成功标记结束。
+        """
+        try:
+            events = self.read_events(scope_key)
+            modified = False
+            now_ms = int(time.time() * 1000)
+            for e in events:
+                if str(e.get("id")) == str(event_id) and e.get("ongoing"):
+                    e["ongoing"] = False
+                    e["ended_at"] = now_ms
+                    modified = True
+                    break
+            if modified:
+                self.write_events(scope_key, events)
+                return True
+            return False
+        except Exception:
+            return False
