@@ -1,0 +1,54 @@
+{
+  "enabled": {
+    "type": "bool",
+    "description": "启用仿真实生活",
+    "hint": "关掉后不再记录/规划生活，已存的数据保留在磁盘上不删。",
+    "default": true
+  },
+  "inject_guide": {
+    "type": "bool",
+    "description": "自动注入使用说明",
+    "hint": "开启后每轮会往提示词里注入一小段使用说明，装上就能用、不必再改人设卡。如果你已把人设写进角色卡，关掉它可以省约 230 字符/轮。",
+    "default": true
+  },
+  "small_ttl_hours": {
+    "type": "int",
+    "description": "小事记多久（小时）",
+    "hint": "已经过去的小事（不是进行中的）保留多久。默认 24 小时 = 记一天，之后自动淡忘。",
+    "default": 24,
+    "slider": {
+      "min": 1,
+      "max": 168,
+      "step": 1
+    }
+  },
+  "ongoing_ttl_hours": {
+    "type": "int",
+    "description": "进行中的事兜底多久（小时）",
+    "hint": "进行中的事如果一直没再被提起，超过这个时长就自动淡忘（防忘了 life_done 就永久挂在进行中）。默认 168 小时 = 7 天。",
+    "default": 168,
+    "slider": {
+      "min": 24,
+      "max": 720,
+      "step": 24
+    }
+  },
+  "max_events": {
+    "type": "int",
+    "description": "最多记几条",
+    "hint": "生活事件池的上限，防止无限膨胀。默认 60 条。",
+    "default": 60,
+    "slider": {
+      "min": 10,
+      "max": 200,
+      "step": 5
+    }
+  },
+  "storage_scope": {
+    "type": "string",
+    "description": "存储作用域",
+    "hint": "session: 各会话独立记忆生活；global: 全局共用同一份生活线（机器人自己的生活在所有聊天中保持一致）。",
+    "default": "session",
+    "options": ["session", "global"]
+  }
+}

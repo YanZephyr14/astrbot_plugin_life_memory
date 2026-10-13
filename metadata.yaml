@@ -1,0 +1,7 @@
+name: astrbot_plugin_life_memory
+display_name: 仿真实生活 (Life Memory)
+desc: 给 AI 角色一个仿真实的生活：每日规划今日生活，记录当天小事与进行中大事，每轮动态注入生活记忆，前后一致有日常有起伏。
+version: v1.0.0
+author: Soulter & AstrBot Community (Ref: 小肥鱼)
+repo: https://github.com/AstrBotDevs/AstrBot
+astrbot_version: ">=4.5.7"

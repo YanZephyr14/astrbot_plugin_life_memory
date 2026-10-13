@@ -1,0 +1,2 @@
+# astrbot_plugin_life_memory 依赖配置
+# 本插件仅依赖 Python 3.12+ 标准库与 AstrBot 内置组件，无需额外外部依赖包。
