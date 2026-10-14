@@ -95,3 +95,18 @@
   - 调用 `/dashboard/overview?scope_key=cat_girl` 能获取对应人格的角色人设简介与生活数据；
   - 在 Dashboard 中能对指定人格单独执行编辑规划、新增事件、结束事件与清空操作。
 
+### 2.12 人格生效白名单与零注入阻断测试 (Test Case 12)
+- **预期**：
+  - 开启 `enable_persona_whitelist: true` 并设置 `persona_whitelist: ["cat_girl"]`；
+  - 当消息为 `cat_girl` 时正常注入生活背景，且工具调用成功；
+  - 当消息为人设 `academic`（非白名单）时，不注入任何 `<life_memory>` 提示词；
+  - 非白名单角色调用生活记忆工具时被拦截并友好提示；
+  - Dashboard overview 接口正确返回 `is_whitelist_enabled` 与 `is_enabled` 标志。
+
+### 2.13 沙箱友好定制模态框清空确认 (Test Case 13)
+- **预期**：
+  - 在 Sandboxed iframe 环境下，点击清空数据按钮弹出定制拟态模态框 `#modalConfirmClear`，无任何阻塞调用；
+  - 点击取消正常关闭，数据保持不变；
+  - 点击确认触发后台 `/dashboard/clear` API，清空当前人格生活数据并即时刷新前端列表。
+
+

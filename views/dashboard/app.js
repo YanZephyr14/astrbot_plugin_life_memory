@@ -18,6 +18,7 @@ const btnClear = document.getElementById("btnClear");
 const personaTitle = document.getElementById("personaTitle");
 const personaIdLabel = document.getElementById("personaIdLabel");
 const badgeDefaultPersona = document.getElementById("badgeDefaultPersona");
+const badgeWhitelistStatus = document.getElementById("badgeWhitelistStatus");
 const btnTogglePrompt = document.getElementById("btnTogglePrompt");
 const personaPromptBox = document.getElementById("personaPromptBox");
 const personaPromptContent = document.getElementById("personaPromptContent");
@@ -77,6 +78,13 @@ const modalAllPersonas = document.getElementById("modalAllPersonas");
 const btnCloseModal = document.getElementById("btnCloseModal");
 const allPersonasGrid = document.getElementById("allPersonasGrid");
 
+// DOM 元素 - 确认清空模态框 (解决原生 confirm 在 iframe/webview 下被禁用的 Bug)
+const modalConfirmClear = document.getElementById("modalConfirmClear");
+const btnCloseConfirmClear = document.getElementById("btnCloseConfirmClear");
+const btnCancelClearModal = document.getElementById("btnCancelClearModal");
+const btnExecuteClear = document.getElementById("btnExecuteClear");
+const confirmClearDesc = document.getElementById("confirmClearDesc");
+
 // DOM 元素 - 插件设置模态框
 const modalSettings = document.getElementById("modalSettings");
 const btnCloseSettingsModal = document.getElementById("btnCloseSettingsModal");
@@ -87,6 +95,10 @@ const settingStorageScope = document.getElementById("settingStorageScope");
 const settingInjectGuide = document.getElementById("settingInjectGuide");
 const settingEnableHoliday = document.getElementById("settingEnableHoliday");
 const settingEnableOutfit = document.getElementById("settingEnableOutfit");
+const settingEnablePersonaWhitelist = document.getElementById("settingEnablePersonaWhitelist");
+const whitelistSelectArea = document.getElementById("whitelistSelectArea");
+const personaCheckboxes = document.getElementById("personaCheckboxes");
+const settingPersonaWhitelistManual = document.getElementById("settingPersonaWhitelistManual");
 const settingSmallTtl = document.getElementById("settingSmallTtl");
 const settingOngoingTtl = document.getElementById("settingOngoingTtl");
 const settingMaxEvents = document.getElementById("settingMaxEvents");
@@ -239,6 +251,13 @@ function renderCurrentPersonaCard(data) {
     badgeDefaultPersona.style.display = "inline-block";
   } else {
     badgeDefaultPersona.style.display = "none";
+  }
+
+  if (data.enable_persona_whitelist && data.is_persona_enabled === false) {
+    badgeWhitelistStatus.style.display = "inline-block";
+    badgeWhitelistStatus.textContent = "未在白名单启用";
+  } else {
+    badgeWhitelistStatus.style.display = "none";
   }
 
   const prompt = data.current_persona_prompt || "";
@@ -488,26 +507,60 @@ btnTogglePrompt.addEventListener("click", () => {
   }
 });
 
-// 清空当前角色生活数据
-btnClear.addEventListener("click", async () => {
-  if (
-    !confirm(
-      `确认清空角色 [${currentScopeKey}] 下的所有生活事件与规划吗？此操作不可逆。`
-    )
-  ) {
-    return;
-  }
-  try {
-    const res = await bridge.apiPost("dashboard/clear", {
-      persona_id: currentScopeKey,
-      scope_key: currentScopeKey,
-    });
-    showToast(res.message || "已清空数据");
-    await refreshAll();
-  } catch (err) {
-    showToast(`清空失败: ${err.message}`, true);
-  }
-});
+// 清空当前角色生活数据：唤起内置确认模态框（彻底解决 iframe/webview 下 window.confirm 被禁用的 Bug）
+if (btnClear) {
+  btnClear.addEventListener("click", () => {
+    if (confirmClearDesc) {
+      confirmClearDesc.textContent = `确认清空角色 [${currentScopeKey}] 下的所有生活事件与规划吗？此操作不可逆。`;
+    }
+    if (modalConfirmClear) {
+      modalConfirmClear.style.display = "flex";
+    }
+  });
+}
+
+// 模态框确认执行清空
+if (btnExecuteClear) {
+  btnExecuteClear.addEventListener("click", async () => {
+    btnExecuteClear.disabled = true;
+    btnExecuteClear.textContent = "正在清空...";
+    try {
+      const res = await bridge.apiPost("dashboard/clear", {
+        persona_id: currentScopeKey,
+        scope_key: currentScopeKey,
+      });
+      showToast(res.message || "已清空数据");
+      if (modalConfirmClear) modalConfirmClear.style.display = "none";
+      await refreshAll();
+    } catch (err) {
+      showToast(`清空失败: ${err.message}`, true);
+    } finally {
+      btnExecuteClear.disabled = false;
+      btnExecuteClear.textContent = "确认清空";
+    }
+  });
+}
+
+// 关闭/取消清空模态框
+if (btnCloseConfirmClear) {
+  btnCloseConfirmClear.addEventListener("click", () => {
+    if (modalConfirmClear) modalConfirmClear.style.display = "none";
+  });
+}
+
+if (btnCancelClearModal) {
+  btnCancelClearModal.addEventListener("click", () => {
+    if (modalConfirmClear) modalConfirmClear.style.display = "none";
+  });
+}
+
+if (modalConfirmClear) {
+  modalConfirmClear.addEventListener("click", (e) => {
+    if (e.target === modalConfirmClear) {
+      modalConfirmClear.style.display = "none";
+    }
+  });
+}
 
 // 刷新按钮
 btnRefresh.addEventListener("click", async () => {
@@ -536,6 +589,9 @@ function renderAllPersonasModal() {
     const defBadge = p.is_default
       ? '<span class="badge badge-default">默认</span>'
       : "";
+    const wlBadge = p.is_enabled === false
+      ? '<span class="badge badge-warning" style="font-size: 11px;" title="该角色未加入生效白名单">未在白名单</span>'
+      : "";
     const planBadge = p.is_today_planned
       ? '<span class="badge badge-ongoing">已规划</span>'
       : `<span class="badge badge-done">待规划</span> <button class="btn-quick-plan btn-plan-single" data-pid="${p.persona_id}" title="立即为该角色制定今日规划">✨ 开始规划</button>`;
@@ -544,7 +600,7 @@ function renderAllPersonasModal() {
       <div>
         <div class="p-item-header">
           <span class="p-item-name">🎭 ${escapeHtml(p.name || p.persona_id)}</span>
-          <div style="display: flex; align-items: center; gap: 4px;">${defBadge} ${planBadge}</div>
+          <div style="display: flex; align-items: center; gap: 4px;">${defBadge} ${wlBadge} ${planBadge}</div>
         </div>
         <div class="p-item-preview" style="margin-top: 8px;">
           ${escapeHtml(p.system_prompt_preview || p.system_prompt || "暂无系统设定")}
@@ -679,6 +735,49 @@ if (btnSettings) {
       settingInjectGuide.checked = conf.inject_guide !== false;
       settingEnableHoliday.checked = conf.enable_holiday !== false;
       settingEnableOutfit.checked = conf.enable_outfit !== false;
+
+      // 白名单设置回显
+      const isWlEnabled = Boolean(conf.enable_persona_whitelist);
+      if (settingEnablePersonaWhitelist) {
+        settingEnablePersonaWhitelist.checked = isWlEnabled;
+      }
+      const curWl = conf.persona_whitelist || [];
+      if (settingPersonaWhitelistManual) {
+        settingPersonaWhitelistManual.value = curWl.join(", ");
+      }
+
+      // 动态生成角色复选框
+      if (personaCheckboxes) {
+        personaCheckboxes.innerHTML = "";
+        const pList = allPersonas.length
+          ? allPersonas
+          : [{ persona_id: "default", name: "default" }];
+        pList.forEach((p) => {
+          const lbl = document.createElement("label");
+          lbl.className = "checkbox-label";
+          lbl.style.padding = "4px 8px";
+          lbl.style.border = "1px solid var(--border-color)";
+          lbl.style.borderRadius = "var(--radius-sm)";
+          lbl.style.background = "var(--bg-secondary)";
+          lbl.style.fontSize = "13px";
+          const isChecked = curWl.includes(p.persona_id);
+          lbl.innerHTML = `<input type="checkbox" class="cb-persona-wl" value="${escapeHtml(p.persona_id)}" ${isChecked ? "checked" : ""} /> <span>🎭 ${escapeHtml(p.name || p.persona_id)}</span>`;
+          personaCheckboxes.appendChild(lbl);
+        });
+      }
+
+      const updateWlArea = () => {
+        if (whitelistSelectArea && settingEnablePersonaWhitelist) {
+          whitelistSelectArea.style.opacity = settingEnablePersonaWhitelist.checked
+            ? "1"
+            : "0.5";
+        }
+      };
+      updateWlArea();
+      if (settingEnablePersonaWhitelist) {
+        settingEnablePersonaWhitelist.onchange = updateWlArea;
+      }
+
       settingSmallTtl.value = conf.small_ttl_hours || 24;
       settingOngoingTtl.value = conf.ongoing_ttl_hours || 168;
       settingMaxEvents.value = conf.max_events || 60;
@@ -717,12 +816,30 @@ if (modalSettings) {
 if (formSettings) {
   formSettings.addEventListener("submit", async (e) => {
     e.preventDefault();
+
+    // 收集已勾选及自定义添加的 Persona ID
+    const selectedPids = new Set();
+    document.querySelectorAll(".cb-persona-wl:checked").forEach((cb) => {
+      if (cb.value && cb.value.trim()) selectedPids.add(cb.value.trim());
+    });
+    if (settingPersonaWhitelistManual && settingPersonaWhitelistManual.value) {
+      settingPersonaWhitelistManual.value
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .forEach((pid) => selectedPids.add(pid));
+    }
+
     const payload = {
       enabled: settingEnabled.checked,
       storage_scope: settingStorageScope.value,
       inject_guide: settingInjectGuide.checked,
       enable_holiday: settingEnableHoliday.checked,
       enable_outfit: settingEnableOutfit.checked,
+      enable_persona_whitelist: settingEnablePersonaWhitelist
+        ? settingEnablePersonaWhitelist.checked
+        : false,
+      persona_whitelist: Array.from(selectedPids),
       small_ttl_hours: Number(settingSmallTtl.value) || 24,
       ongoing_ttl_hours: Number(settingOngoingTtl.value) || 168,
       max_events: Number(settingMaxEvents.value) || 60,

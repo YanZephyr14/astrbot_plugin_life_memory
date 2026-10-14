@@ -74,6 +74,18 @@
       "step": 1
     }
   },
+  "enable_persona_whitelist": {
+    "type": "bool",
+    "description": "启用人格白名单",
+    "hint": "开启后仅白名单列表中的人格才会生效拟真生活记忆功能，未在白名单中的人格不记录生活、不注入提示词。",
+    "default": false
+  },
+  "persona_whitelist": {
+    "type": "list",
+    "description": "生效的人格白名单",
+    "hint": "允许启用生活记忆的角色 Persona ID 列表（如 default、cat_girl 等）。",
+    "default": []
+  },
   "session_list_mode": {
     "type": "string",
     "description": "会话启用范围",
@@ -88,3 +100,4 @@
     "default": []
   }
 }
+

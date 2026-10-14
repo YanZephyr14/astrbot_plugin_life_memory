@@ -41,6 +41,7 @@
               <div class="persona-name-wrap">
                 <h2 id="personaTitle" class="persona-title">加载中...</h2>
                 <span id="badgeDefaultPersona" class="badge badge-default" style="display: none;">系统默认人格</span>
+                <span id="badgeWhitelistStatus" class="badge badge-warning" style="display: none;">未在白名单启用</span>
               </div>
               <div class="persona-id-sub">Persona ID: <code id="personaIdLabel">-</code></div>
             </div>
@@ -276,6 +277,30 @@
               <input type="checkbox" id="settingInjectGuide" class="toggle-switch" />
             </div>
 
+            <!-- 人格白名单控制 -->
+            <div class="settings-group-title">人格生效白名单控制</div>
+            <div class="setting-item">
+              <div class="setting-info">
+                <label class="setting-label" for="settingEnablePersonaWhitelist">启用人格白名单</label>
+                <span class="setting-hint">开启后仅白名单中的人格才能生效拟真生活记忆；未启用的人格不记录生活、不注入提示词。</span>
+              </div>
+              <input type="checkbox" id="settingEnablePersonaWhitelist" class="toggle-switch" />
+            </div>
+
+            <div id="whitelistSelectArea" class="setting-item" style="flex-direction: column; align-items: stretch; gap: 8px;">
+              <div class="setting-info">
+                <label class="setting-label">生效的人格列表 (勾选允许启用的角色)</label>
+                <span class="setting-hint">选中的角色将享有拟真生活记忆体系，未选中的角色将被完全隔离禁用。</span>
+              </div>
+              <div id="personaCheckboxes" style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px;">
+                <!-- 动态生成复选框 -->
+              </div>
+              <div style="margin-top: 8px;">
+                <label class="form-label" style="font-size: 12px;" for="settingPersonaWhitelistManual">自定义添加 Persona ID（逗号分隔）：</label>
+                <input type="text" id="settingPersonaWhitelistManual" class="input-text" placeholder="例：cat_girl, assistant, scholar" />
+              </div>
+            </div>
+
             <!-- 生活感知强化 -->
             <div class="settings-group-title">生活感知与维度</div>
             <div class="setting-item">
@@ -329,6 +354,28 @@
               </button>
             </div>
           </form>
+        </div>
+      </div>
+    </div>
+
+    <!-- 确认清空专属模态框 (替代并彻底解决原生 confirm 兼容性问题) -->
+    <div id="modalConfirmClear" class="modal-overlay" style="display: none;">
+      <div class="modal-card" style="max-width: 440px;">
+        <div class="modal-header">
+          <div class="modal-title" style="color: var(--danger);">
+            <span>⚠️</span>
+            <span>确认清空生活数据</span>
+          </div>
+          <button id="btnCloseConfirmClear" class="btn-icon" title="关闭">✕</button>
+        </div>
+        <div class="modal-body">
+          <p id="confirmClearDesc" style="font-size: 14px; margin-bottom: 20px; line-height: 1.6; color: var(--text-primary);">
+            确认清空当前角色下的所有生活事件与规划吗？此操作不可逆。
+          </p>
+          <div style="display: flex; justify-content: flex-end; gap: 10px;">
+            <button id="btnCancelClearModal" class="btn btn-outline">取消</button>
+            <button id="btnExecuteClear" class="btn btn-danger">确认清空</button>
+          </div>
         </div>
       </div>
     </div>

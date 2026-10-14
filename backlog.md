@@ -105,6 +105,26 @@
   - [x] 10.3 单元测试与代码质量验证：
     - [x] 新增自动规划生成与配置修改的完整单测，全量 26 项单元测试全部通过 (26/26 passed)
     - [x] `ruff check` 与 `ruff format` 100% 校验通过
-    - [x] 保持双静态目录（`views/` 与 `pages/`）哈希严格一致
+- [x] **Phase 11: 人格生效白名单与控制台数据清空 Bug 彻底修复 (v1.3.0)**
+  - [x] 11.1 人格生效白名单机制实现与注入阻断：
+    - [x] `_conf_schema.json` 新增 `enable_persona_whitelist`（bool）与 `persona_whitelist`（list）配置项
+    - [x] `main.py` 核心实现 `_is_persona_enabled(persona_id)` 辅助判断
+    - [x] 提示词注入钩子（`inject_life_context`）中校验白名单，未启用人格零 Prompt 注入与零 Token 消耗
+    - [x] 四项 LLM 工具（`life_note`, `life_recall`, `life_done`, `life_plan`）添加白名单阻断防护
+    - [x] Web API 端（`/dashboard/overview`, `/dashboard/personas`, `/dashboard/config`）支持白名单状态返回与保存
+  - [x] 11.2 彻底修复 Dashboard 清空数据按钮无响应 Bug：
+    - [x] 定位原生 `window.confirm()` 在 Sandboxed Iframe 环境下被静默拦截失效的根本原因
+    - [x] 在 `index.html` 构建轻量优雅的定制确认模态框 `#modalConfirmClear`
+    - [x] 在 `app.js` 统一接管二次确认逻辑，彻底消除浏览器沙箱阻断隐患并提供良好交互动画
+  - [x] 11.3 Dashboard 前端视图白名单与状态提示升级：
+    - [x] 人格详情卡片与所有人格全景列表中呈现白名单启用状态徽章与提示
+    - [x] 插件配置模态框新增白名单开关、系统人格快速勾选复选框列表及自定义 Persona 输入
+    - [x] 确保 `views/dashboard/` 与 `pages/dashboard/` 双目录 100% 保持一致与 SHA256 校验相同
+  - [x] 11.4 单元测试、代码规范与发布：
+    - [x] 编写人格白名单生效与阻断的测试用例
+    - [x] 编写清空模态框与配置保存的集成测试，27 项测试 100% 通过 (27/27 passed)
+    - [x] `ruff check` 与 `ruff format` 100% 校验通过
+    - [x] 升级 `metadata.yaml` 版本至 `v1.3.0`
+
 
 

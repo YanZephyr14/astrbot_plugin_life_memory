@@ -396,6 +396,7 @@ class LifeMemoryPlugin(Star):
                 info["ongoing_count"] = len(ongoing)
                 info["today_count"] = len(today_events)
                 info["events_count"] = len(events)
+                info["is_enabled"] = self._is_persona_enabled(pid)
             else:
                 info["has_data"] = False
                 info["is_today_planned"] = False
@@ -435,6 +436,26 @@ class LifeMemoryPlugin(Star):
             return unified_msg_origin not in session_list
         return True
 
+    def _is_persona_enabled(self, persona_id: str) -> bool:
+        """检查指定人格是否在允许的生效范围内（白名单控制）。
+
+        Args:
+            persona_id: 人格标识 ID。
+
+        Returns:
+            若该人格允许生效返回 True，否则返回 False。
+        """
+        if not bool(self.config.get("enable_persona_whitelist", False)):
+            return True
+
+        whitelist = [
+            str(x).strip()
+            for x in self.config.get("persona_whitelist", [])
+            if str(x).strip()
+        ]
+        target = str(persona_id or "").strip()
+        return target in whitelist
+
     # ==========================================
     # 大语言模型工具 (LLM Tools)
     # ==========================================
@@ -454,13 +475,14 @@ class LifeMemoryPlugin(Star):
                 return "仿真实生活功能已禁用，未记录。"
             if not self._is_session_enabled(event.unified_msg_origin or ""):
                 return "当前会话未启用生活记忆。"
+            scope_key = await self._get_scope_key_async(event)
+            if not self._is_persona_enabled(scope_key):
+                return f"当前人格「{scope_key}」未在生活记忆白名单中启用。"
             text = str(content or "").strip()[:120]
             if not text:
                 return "内容为空，未记录。"
             if not self.store:
                 return "存储未就绪，记录失败。"
-
-            scope_key = await self._get_scope_key_async(event)
             async with self.store.get_scope_lock(scope_key):
                 events = self.store.prune_and_get(scope_key)
                 now_ms = int(time.time() * 1000)
@@ -510,6 +532,8 @@ class LifeMemoryPlugin(Star):
                 return "存储未就绪。"
 
             scope_key = await self._get_scope_key_async(event)
+            if not self._is_persona_enabled(scope_key):
+                return f"当前人格「{scope_key}」未在生活记忆白名单中启用。"
             events = self.store.prune_and_get(scope_key)
             now_ms = int(time.time() * 1000)
             small_ttl_hours = float(self.config.get("small_ttl_hours", 24.0))
@@ -576,6 +600,8 @@ class LifeMemoryPlugin(Star):
                 return "存储未就绪。"
 
             scope_key = await self._get_scope_key_async(event)
+            if not self._is_persona_enabled(scope_key):
+                return f"当前人格「{scope_key}」未在生活记忆白名单中启用。"
             async with self.store.get_scope_lock(scope_key):
                 events = self.store.read_events(scope_key)
                 done_count = 0
@@ -636,6 +662,8 @@ class LifeMemoryPlugin(Star):
                 return "存储未就绪。"
 
             scope_key = await self._get_scope_key_async(event)
+            if not self._is_persona_enabled(scope_key):
+                return f"当前人格「{scope_key}」未在生活记忆白名单中启用。"
             async with self.store.get_scope_lock(scope_key):
                 now_ms = int(time.time() * 1000)
                 holiday = "无"
@@ -697,6 +725,8 @@ class LifeMemoryPlugin(Star):
                 return
 
             scope_key = await self._get_scope_key_async(event, req)
+            if not self._is_persona_enabled(scope_key):
+                return
             events = self.store.prune_and_get(scope_key)
             plan = self.store.read_plan(scope_key)
 
@@ -1004,6 +1034,15 @@ class LifeMemoryPlugin(Star):
                 "inject_guide": bool(self.config.get("inject_guide", True)),
                 "enable_holiday": bool(self.config.get("enable_holiday", True)),
                 "enable_outfit": bool(self.config.get("enable_outfit", True)),
+                "enable_persona_whitelist": bool(
+                    self.config.get("enable_persona_whitelist", False)
+                ),
+                "persona_whitelist": [
+                    str(x).strip()
+                    for x in self.config.get("persona_whitelist", [])
+                    if str(x).strip()
+                ],
+                "is_persona_enabled": self._is_persona_enabled(scope_key),
                 "is_today_planned": has_today_plan,
                 "plan": plan if has_today_plan else None,
             }
@@ -1379,6 +1418,8 @@ class LifeMemoryPlugin(Star):
                         "storage_scope": "persona",
                         "enable_holiday": True,
                         "enable_outfit": True,
+                        "enable_persona_whitelist": False,
+                        "persona_whitelist": [],
                         "small_ttl_hours": 24,
                         "ongoing_ttl_hours": 168,
                         "max_events": 60,
@@ -1416,6 +1457,20 @@ class LifeMemoryPlugin(Star):
                 self.config["enable_holiday"] = bool(payload["enable_holiday"])
             if "enable_outfit" in payload:
                 self.config["enable_outfit"] = bool(payload["enable_outfit"])
+            if "enable_persona_whitelist" in payload:
+                self.config["enable_persona_whitelist"] = bool(
+                    payload["enable_persona_whitelist"]
+                )
+            if "persona_whitelist" in payload:
+                raw_wl = payload["persona_whitelist"]
+                if isinstance(raw_wl, list):
+                    self.config["persona_whitelist"] = [
+                        str(x).strip() for x in raw_wl if str(x).strip()
+                    ]
+                elif isinstance(raw_wl, str):
+                    self.config["persona_whitelist"] = [
+                        x.strip() for x in raw_wl.split(",") if x.strip()
+                    ]
             if "small_ttl_hours" in payload:
                 try:
                     val = int(payload["small_ttl_hours"])
