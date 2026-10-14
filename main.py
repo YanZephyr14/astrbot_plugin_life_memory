@@ -435,6 +435,11 @@ class LifeMemoryPlugin(Star):
 
             results.append(info)
 
+        # 严格过滤纯下划线构成的幽灵人格
+        results = [
+            r for r in results if not re.fullmatch(r"_+", str(r.get("persona_id", "")))
+        ]
+
         # 排序：默认人格放最前，其余按 persona_id 字母排序
         results.sort(
             key=lambda x: (not x.get("is_default", False), x.get("persona_id", ""))
@@ -980,7 +985,9 @@ class LifeMemoryPlugin(Star):
         if scope_setting == "global":
             return "__global__"
         if raw_scope and str(raw_scope).strip():
-            return str(raw_scope).strip()
+            candidate = str(raw_scope).strip()
+            if not re.fullmatch(r"_+", candidate):
+                return candidate
         return self._get_default_persona_id()
 
     async def api_dashboard_personas(self):

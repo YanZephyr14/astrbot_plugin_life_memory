@@ -269,17 +269,24 @@ function renderCurrentPersonaCard(data) {
 function renderScopeOptions(personasList, activeKey) {
   scopeSelect.innerHTML = "";
 
-  if (!personasList || !personasList.length) {
+  // 严格过滤任何由纯下划线构成的历史遗留脏项
+  const validPersonas = (personasList || []).filter(
+    (p) => p && p.persona_id && !/^_+$/.test(p.persona_id)
+  );
+
+  if (!validPersonas.length) {
+    const safeKey =
+      activeKey && !/^_+$/.test(activeKey) ? activeKey : "default";
     const opt = document.createElement("option");
-    opt.value = activeKey;
-    opt.textContent = activeKey;
+    opt.value = safeKey;
+    opt.textContent = safeKey;
     scopeSelect.appendChild(opt);
-    scopeSelect.value = activeKey;
+    scopeSelect.value = safeKey;
     return;
   }
 
   let hasMatched = false;
-  for (const p of personasList) {
+  for (const p of validPersonas) {
     const opt = document.createElement("option");
     opt.value = p.persona_id;
     const isDef = p.is_default ? "🌟 " : "🎭 ";
@@ -292,16 +299,21 @@ function renderScopeOptions(personasList, activeKey) {
     scopeSelect.appendChild(opt);
   }
 
-  // 若传入的 activeKey 不在列表内且非空，作为临时项补全，避免选中状态丢失
-  if (!hasMatched && activeKey) {
+  // 若传入的 activeKey 不在列表内且非纯下划线，作为临时项补全，避免选中状态丢失
+  if (!hasMatched && activeKey && !/^_+$/.test(activeKey)) {
     const opt = document.createElement("option");
     opt.value = activeKey;
     opt.textContent = `🎭 ${activeKey}`;
     opt.selected = true;
     scopeSelect.appendChild(opt);
+    scopeSelect.value = activeKey;
+  } else if (!hasMatched && validPersonas.length > 0) {
+    // 若 activeKey 是纯下划线或未匹配，安全回退到有效角色的第一项
+    scopeSelect.value = validPersonas[0].persona_id;
+    currentScopeKey = validPersonas[0].persona_id;
+  } else {
+    scopeSelect.value = activeKey;
   }
-
-  scopeSelect.value = activeKey;
 }
 
 // 加载当前角色事件列表
@@ -668,18 +680,20 @@ function renderAllPersonasModal() {
 }
 
 // 打开所有人格模态框
-btnAllPersonas.addEventListener("click", async () => {
-  try {
-    const res = await bridge.apiGet("dashboard/personas");
-    if (res && res.personas) {
-      allPersonas = res.personas;
+if (btnAllPersonas) {
+  btnAllPersonas.addEventListener("click", async () => {
+    try {
+      const res = await bridge.apiGet("dashboard/personas");
+      if (res && res.personas) {
+        allPersonas = res.personas;
+      }
+    } catch (err) {
+      console.warn("加载 personas 列表失败，回退至缓存:", err);
     }
-  } catch (err) {
-    console.warn("加载 personas 列表失败，回退至缓存:", err);
-  }
-  renderAllPersonasModal();
-  modalAllPersonas.style.display = "flex";
-});
+    renderAllPersonasModal();
+    modalAllPersonas.style.display = "flex";
+  });
+}
 
 // 关闭模态框
 btnCloseModal.addEventListener("click", () => {

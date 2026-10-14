@@ -497,6 +497,8 @@ class LifeStore:
             "LPT9",
         }:
             safe = f"_{safe}"
+        if re.fullmatch(r"_+", safe):
+            safe = "_default"
         return safe or "_default"
 
     def get_events_file(self, scope_key: str | None) -> Path:
@@ -741,7 +743,7 @@ class LifeStore:
                     key = name[:-5]
                 else:
                     continue
-                # 过滤由纯下划线构成的历史遗留脏文件名
+                # 过滤由纯下划线构成的历史遗留脏文件名，不作为独立作用域暴露
                 if key and not re.fullmatch(r"_+", key):
                     scopes.add(key)
             return sorted(scopes)
