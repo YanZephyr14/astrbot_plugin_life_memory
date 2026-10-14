@@ -274,18 +274,34 @@ function renderScopeOptions(personasList, activeKey) {
     opt.value = activeKey;
     opt.textContent = activeKey;
     scopeSelect.appendChild(opt);
+    scopeSelect.value = activeKey;
     return;
   }
 
+  let hasMatched = false;
   for (const p of personasList) {
     const opt = document.createElement("option");
     opt.value = p.persona_id;
     const isDef = p.is_default ? "🌟 " : "🎭 ";
     const planTag = p.is_today_planned ? " [已规划]" : " [未规划]";
     opt.textContent = `${isDef}${p.name || p.persona_id}${planTag}`;
-    if (p.persona_id === activeKey) opt.selected = true;
+    if (p.persona_id === activeKey) {
+      opt.selected = true;
+      hasMatched = true;
+    }
     scopeSelect.appendChild(opt);
   }
+
+  // 若传入的 activeKey 不在列表内且非空，作为临时项补全，避免选中状态丢失
+  if (!hasMatched && activeKey) {
+    const opt = document.createElement("option");
+    opt.value = activeKey;
+    opt.textContent = `🎭 ${activeKey}`;
+    opt.selected = true;
+    scopeSelect.appendChild(opt);
+  }
+
+  scopeSelect.value = activeKey;
 }
 
 // 加载当前角色事件列表
@@ -570,8 +586,9 @@ btnRefresh.addEventListener("click", async () => {
 
 // 角色下拉切换
 scopeSelect.addEventListener("change", async (e) => {
-  currentScopeKey = e.target.value;
-  await refreshAll();
+  const selectedId = e.target.value;
+  await refreshAll(selectedId);
+  showToast(`已切换至角色: ${selectedId}`);
 });
 
 // 渲染所有人格全景模态框
@@ -640,10 +657,10 @@ function renderAllPersonasModal() {
     }
 
     item.addEventListener("click", async () => {
-      currentScopeKey = p.persona_id;
+      const selectedId = p.persona_id;
       modalAllPersonas.style.display = "none";
-      await refreshAll();
-      showToast(`已切换至角色: ${p.name || p.persona_id}`);
+      await refreshAll(selectedId);
+      showToast(`已切换至角色: ${p.name || selectedId}`);
     });
 
     allPersonasGrid.appendChild(item);
@@ -857,7 +874,10 @@ if (formSettings) {
   });
 }
 
-async function refreshAll() {
+async function refreshAll(targetKey) {
+  if (targetKey) {
+    currentScopeKey = targetKey;
+  }
   await loadOverview();
   await loadEvents();
 }

@@ -456,16 +456,47 @@ class LifeStore:
             pass
 
     def get_safe_key(self, scope_key: str | None) -> str:
-        """根据会话或标识生成安全文件名键名。
+        """根据会话或人格标识生成安全文件名键名。
+
+        仅过滤操作系统底层保留的非法路径字符，完整保留中文及各语言合法 Unicode 字符。
 
         Args:
-            scope_key: 原始会话标识或统一消息来源（UMO）。
+            scope_key: 原始会话标识或人格 ID。
 
         Returns:
-            经过安全过滤的标识字符串。
+            经过安全过滤的合法文件名标识字符串。
         """
         raw = str(scope_key or "").strip()
-        safe = re.sub(r"[^a-zA-Z0-9_-]", "_", raw)
+        if not raw:
+            return "_default"
+        # 仅过滤跨平台非法文件名字符: < > : " / \ | ? * 以及 ASCII 控制字符
+        safe = re.sub(r"[\<\>\:\"\/\\\|\?\*\x00-\x1f]", "_", raw).strip(". ")
+        # 处理 Windows 保留设备名称
+        if safe.upper() in {
+            "CON",
+            "PRN",
+            "AUX",
+            "NUL",
+            "COM1",
+            "COM2",
+            "COM3",
+            "COM4",
+            "COM5",
+            "COM6",
+            "COM7",
+            "COM8",
+            "COM9",
+            "LPT1",
+            "LPT2",
+            "LPT3",
+            "LPT4",
+            "LPT5",
+            "LPT6",
+            "LPT7",
+            "LPT8",
+            "LPT9",
+        }:
+            safe = f"_{safe}"
         return safe or "_default"
 
     def get_events_file(self, scope_key: str | None) -> Path:
@@ -706,13 +737,78 @@ class LifeStore:
                 name = item.name
                 if name.endswith(".plan.json"):
                     key = name[:-10]
-                    scopes.add(key)
                 elif not name.startswith(".") and ".tmp" not in name:
                     key = name[:-5]
+                else:
+                    continue
+                # 过滤由纯下划线构成的历史遗留脏文件名
+                if key and not re.fullmatch(r"_+", key):
                     scopes.add(key)
             return sorted(scopes)
         except Exception:
             return []
+
+    def migrate_legacy_underscore_files(
+        self, candidate_personas: list[str]
+    ) -> list[tuple[str, str]]:
+        """迁移因旧版 safe_key 过滤导致转义为纯下划线的历史文件。
+
+        Args:
+            candidate_personas: 系统已知的人格 ID 列表。
+
+        Returns:
+            成功迁移的文件名映射列表 [(old_name, new_name), ...]。
+        """
+        migrated: list[tuple[str, str]] = []
+        try:
+            if not self.root_dir.exists():
+                return migrated
+            for item in list(self.root_dir.glob("*.json")):
+                stem = ""
+                is_plan = False
+                if item.name.endswith(".plan.json"):
+                    stem = item.name[:-10]
+                    is_plan = True
+                elif not item.name.startswith(".") and ".tmp" not in item.name:
+                    stem = item.name[:-5]
+                    is_plan = False
+                else:
+                    continue
+
+                if not re.fullmatch(r"_+", stem):
+                    continue
+
+                # 寻找字符长度匹配且尚未有对应文件的候选人格
+                matched_pid = None
+                matches = [p for p in candidate_personas if len(p) == len(stem)]
+                for cand in matches:
+                    cand_safe = self.get_safe_key(cand)
+                    target_file = (
+                        self.get_plan_file(cand_safe)
+                        if is_plan
+                        else self.get_events_file(cand_safe)
+                    )
+                    if not target_file.exists():
+                        matched_pid = cand
+                        break
+
+                if matched_pid:
+                    target_file = (
+                        self.get_plan_file(matched_pid)
+                        if is_plan
+                        else self.get_events_file(matched_pid)
+                    )
+                    item.replace(target_file)
+                    migrated.append((item.name, target_file.name))
+                else:
+                    # 无法匹配的孤立纯下划线脏文件，安全删除以防污染作用域
+                    try:
+                        item.unlink()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        return migrated
 
     def delete_event(self, scope_key: str | None, event_id: str) -> bool:
         """按 ID 删除指定作用域中的某条事件。

@@ -155,6 +155,32 @@ class LifeMemoryPlugin(Star):
             get_config_func=lambda: dict(self.config),
         )
         self.store.ensure_dir()
+
+        # 尝试平滑迁移旧版本将中文转义为纯下划线的历史残留文件
+        try:
+            candidate_pids: list[str] = []
+            default_pid = self._get_default_persona_id()
+            if default_pid:
+                candidate_pids.append(default_pid)
+            if (
+                hasattr(self.context, "persona_manager")
+                and self.context.persona_manager
+            ):
+                pm = self.context.persona_manager
+                if hasattr(pm, "personas") and pm.personas:
+                    for p in pm.personas:
+                        pid = str(getattr(p, "persona_id", "")).strip()
+                        if pid and pid not in candidate_pids:
+                            candidate_pids.append(pid)
+            if candidate_pids:
+                migrated = self.store.migrate_legacy_underscore_files(candidate_pids)
+                if migrated:
+                    logger.info(
+                        f"[life-memory] 自动迁移旧版下划线历史生活数据: {migrated}"
+                    )
+        except Exception as e:
+            logger.debug(f"[life-memory] 自动迁移历史下划线数据异常: {e}")
+
         logger.info(
             f"[life-memory] 仿真实生活插件已初始化，数据目录: {plugin_data_path}"
         )
@@ -365,6 +391,8 @@ class LifeMemoryPlugin(Star):
         if self.store:
             scopes = self.store.list_scopes()
             for s in scopes:
+                if re.fullmatch(r"_+", s):
+                    continue
                 if s not in persona_map:
                     persona_map[s] = {
                         "persona_id": s,
@@ -952,8 +980,7 @@ class LifeMemoryPlugin(Star):
         if scope_setting == "global":
             return "__global__"
         if raw_scope and str(raw_scope).strip():
-            safe = str(raw_scope).strip()
-            return self.store.get_safe_key(safe) if self.store else safe
+            return str(raw_scope).strip()
         return self._get_default_persona_id()
 
     async def api_dashboard_personas(self):
