@@ -82,6 +82,15 @@ body {
   gap: 10px;
 }
 
+.header-logo {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  object-fit: cover;
+  box-shadow: var(--shadow-sm);
+  display: block;
+}
+
 .header-title h1 {
   font-size: 22px;
   font-weight: 700;
