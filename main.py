@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import json
+import re
 import time
 import uuid
 from pathlib import Path
@@ -123,6 +125,24 @@ class LifeMemoryPlugin(Star):
             self.api_dashboard_personas,
             ["GET"],
             "Get all personas list with life memory summary",
+        )
+        context.register_web_api(
+            f"/{PLUGIN_NAME}/dashboard/plan/auto_generate",
+            self.api_dashboard_plan_auto_generate,
+            ["POST"],
+            "Auto generate and start today life plan for persona",
+        )
+        context.register_web_api(
+            f"/{PLUGIN_NAME}/dashboard/config",
+            self.api_dashboard_get_config,
+            ["GET"],
+            "Get plugin configuration",
+        )
+        context.register_web_api(
+            f"/{PLUGIN_NAME}/dashboard/config/save",
+            self.api_dashboard_save_config,
+            ["POST"],
+            "Save plugin configuration",
         )
 
     async def initialize(self) -> None:
@@ -1151,3 +1171,292 @@ class LifeMemoryPlugin(Star):
                     "message": f"已清空人格 [{scope_key}] 的所有生活数据",
                 }
             )
+
+    def _fallback_generate_plan(
+        self,
+        persona_name: str,
+        persona_prompt: str,
+        current_slot: str,
+        today_holiday: str,
+        hist_plans: list[dict[str, Any]],
+        ongoing_events: list[str],
+    ) -> dict[str, Any]:
+        """降级合成符合角色设定与真实时段的拟真生活规划。
+
+        Args:
+            persona_name: 角色名称。
+            persona_prompt: 角色人设系统提示词。
+            current_slot: 当前自然时段名称（如上午、午后、傍晚等）。
+            today_holiday: 今日节日名称。
+            hist_plans: 近日历史规划列表。
+            ongoing_events: 手头进行中的生活事件列表。
+
+        Returns:
+            规划字典（包含 day, outfit, mood, location, twist, weather, holiday）。
+        """
+        slot_actions = {
+            "清晨": "早起拉开窗帘透气，整理桌面待办与晨间杂务",
+            "早晨": "享用简单的早餐，梳理一天的日程计划与待办事项",
+            "上午": "专注处理手头事务与核心日常，保持敏捷思考",
+            "中午": "享用午餐稍事歇息，听首轻柔的音乐缓解倦意",
+            "下午": "整理生活与日常记忆，享受安静惬意的午后时光",
+            "傍晚": "结束忙碌的工作，出门散步或采买新鲜食材",
+            "晚上": "享用热腾腾的晚餐，静心阅读或与大家闲聊交流",
+            "深夜": "回顾今日生活点滴，整理好思绪准备梳洗休息",
+        }
+        main_act = slot_actions.get(
+            current_slot, "处理日常事务，感受平淡而惬意的真实时光"
+        )
+
+        holiday_suffix = (
+            f"，逢{today_holiday}感受着浓郁的节日氛围"
+            if today_holiday and today_holiday != "无"
+            else ""
+        )
+        day_text = (
+            f"在{current_slot}开启今日生活：{main_act}{holiday_suffix}，"
+            "留些时间放松散心、品味日常。"
+        )
+
+        # 若手头有进行中的大事，自然带入规划
+        if ongoing_events and ongoing_events[0]:
+            day_text += f"（顺便跟进「{ongoing_events[0][:20]}」的进展）"
+
+        # 根据人设关键词微调穿搭与心境
+        is_cute_persona = any(
+            k in persona_name or k in persona_prompt for k in ("猫", "萌", "可爱", "娘")
+        )
+        outfit = "毛茸茸的温暖居家服" if is_cute_persona else "简约舒适的日常休闲装"
+        mood = "元气满满，好奇期待" if is_cute_persona else "平静专注，松弛适意"
+
+        return {
+            "day": day_text,
+            "outfit": outfit,
+            "mood": mood,
+            "location": "温馨的室内书桌旁",
+            "twist": "",
+            "weather": "多云转晴，微风拂面",
+            "holiday": today_holiday,
+        }
+
+    async def api_dashboard_plan_auto_generate(self):
+        """Dashboard 一键自动生成并开启今日生活规划接口。"""
+        if not self.store:
+            return error_response("存储未初始化", status_code=500)
+        try:
+            payload = await request.json(default={})
+        except Exception:
+            payload = {}
+
+        raw_scope = (
+            payload.get("persona_id")
+            or payload.get("scope_key")
+            or request.query.get("persona_id")
+        )
+        scope_key = self._resolve_scope_key(raw_scope)
+
+        # 1. 获取目标人格的基础信息与 System Prompt
+        all_personas = await self.get_all_personas_data()
+        current_persona = next(
+            (p for p in all_personas if p["persona_id"] == scope_key), None
+        )
+        persona_name = current_persona.get("name") if current_persona else scope_key
+        persona_prompt = current_persona.get("system_prompt") if current_persona else ""
+
+        # 2. 获取当前环境感知
+        current_minute = minute_of_day()
+        current_slot = get_natural_slot_name(current_minute)
+        today_holiday = get_today_holiday()
+        hist_plans = self.store.get_recent_plan_history(scope_key, limit=2)
+        events = self.store.read_events(scope_key)
+        ongoing_events = [e.get("text", "") for e in events if e.get("ongoing")]
+
+        # 3. 规划生成逻辑
+        generated_plan: dict[str, Any] | None = None
+
+        # 尝试调用 LLM 生成
+        if hasattr(self.context, "get_using_provider_async") and hasattr(
+            self.context, "llm_generate"
+        ):
+            try:
+                prov = await self.context.get_using_provider_async()
+                if prov and hasattr(prov, "meta"):
+                    prov_id = prov.meta().id
+                    prompt_lines = [
+                        f"你正在为角色「{persona_name}」制定今日的拟真生活起居与日程规划。",
+                    ]
+                    if persona_prompt:
+                        prompt_lines.append(f"角色设定参考：{persona_prompt[:300]}")
+                    prompt_lines.append(f"当前时段：{current_slot}")
+                    if today_holiday and today_holiday != "无":
+                        prompt_lines.append(f"今日节日：{today_holiday}")
+                    if hist_plans and hist_plans[0].get("day"):
+                        prompt_lines.append(f"昨日生活参考：{hist_plans[0]['day']}")
+                    if ongoing_events:
+                        prompt_lines.append(
+                            f"手头进行中的事：{'; '.join(ongoing_events[:3])}"
+                        )
+                    prompt_lines.append(
+                        "\n请以第一人称口吻，拟定一份符合人设、贴近真实生活起居的今日安排。\n"
+                        "必须输出纯 JSON，格式如下（严禁包含 markdown 代码块包裹）：\n"
+                        "{\n"
+                        '  "day": "今天大致做什么（一两句说清具体行程安排）",\n'
+                        '  "outfit": "今日穿搭（选填，如休闲卫衣/衬衫等）",\n'
+                        '  "mood": "当前心境（选填，如平静/专注等）",\n'
+                        '  "location": "常驻地点（选填，如书房/咖啡馆等）",\n'
+                        '  "twist": "偶发插曲（选填，没有可留空）",\n'
+                        '  "weather": "今日天气（选填，如晴天微风）"\n'
+                        "}"
+                    )
+                    llm_resp = await self.context.llm_generate(
+                        chat_provider_id=prov_id,
+                        prompt="\n".join(prompt_lines),
+                    )
+                    if llm_resp and getattr(llm_resp, "completion_text", None):
+                        text = llm_resp.completion_text.strip()
+                        json_match = re.search(r"\{[\s\S]*\}", text)
+                        if json_match:
+                            parsed = json.loads(json_match.group(0))
+                            if isinstance(parsed, dict) and parsed.get("day"):
+                                generated_plan = parsed
+            except Exception as e:
+                logger.info(
+                    f"[life-memory] 调用 LLM 规划未成功，进入拟真生活降级合成: {e}"
+                )
+
+        # 4. 智能降级保障（无 LLM 或 LLM 异常时的自适应拟真生活规划合成器）
+        if not generated_plan or not generated_plan.get("day"):
+            generated_plan = self._fallback_generate_plan(
+                persona_name=persona_name,
+                persona_prompt=persona_prompt,
+                current_slot=current_slot,
+                today_holiday=today_holiday,
+                hist_plans=hist_plans,
+                ongoing_events=ongoing_events,
+            )
+
+        # 5. 持久化存入 store
+        async with self.store.get_scope_lock(scope_key):
+            now_ms = int(time.time() * 1000)
+            final_plan_data = {
+                "date": now_ms,
+                "day": str(generated_plan.get("day", "")).strip()[:200],
+                "twist": str(generated_plan.get("twist", "")).strip()[:80],
+                "weather": str(generated_plan.get("weather", "晴朗微风")).strip()[:40],
+                "holiday": str(generated_plan.get("holiday") or today_holiday).strip()[
+                    :40
+                ],
+            }
+            if generated_plan.get("outfit"):
+                final_plan_data["outfit"] = str(generated_plan["outfit"]).strip()[:60]
+            if generated_plan.get("mood"):
+                final_plan_data["mood"] = str(generated_plan["mood"]).strip()[:40]
+            if generated_plan.get("location"):
+                final_plan_data["location"] = str(generated_plan["location"]).strip()[
+                    :60
+                ]
+
+            self.store.write_plan(scope_key, final_plan_data)
+
+            return json_response(
+                {
+                    "success": True,
+                    "persona_id": scope_key,
+                    "plan": final_plan_data,
+                    "message": f"已成功为角色「{persona_name}」制定今日生活规划！",
+                }
+            )
+
+    async def api_dashboard_get_config(self):
+        """Dashboard 获取插件配置接口。"""
+        try:
+            return json_response(
+                {
+                    "config": dict(self.config),
+                    "defaults": {
+                        "enabled": True,
+                        "inject_guide": True,
+                        "storage_scope": "persona",
+                        "enable_holiday": True,
+                        "enable_outfit": True,
+                        "small_ttl_hours": 24,
+                        "ongoing_ttl_hours": 168,
+                        "max_events": 60,
+                        "history_plan_days": 2,
+                        "session_list_mode": "all",
+                    },
+                }
+            )
+        except Exception as e:
+            logger.error(f"[life-memory] 获取配置失败: {e}", exc_info=True)
+            return error_response(f"获取配置失败: {e}", status_code=500)
+
+    async def api_dashboard_save_config(self):
+        """Dashboard 保存插件配置接口。"""
+        try:
+            payload = await request.json(default={})
+            if not isinstance(payload, dict):
+                return error_response("配置数据格式必须为 JSON 对象", status_code=400)
+
+            # 校验并更新支持的配置项
+            if "enabled" in payload:
+                self.config["enabled"] = bool(payload["enabled"])
+            if "inject_guide" in payload:
+                self.config["inject_guide"] = bool(payload["inject_guide"])
+            if "storage_scope" in payload:
+                scope = str(payload["storage_scope"]).lower().strip()
+                if scope in ("persona", "global"):
+                    self.config["storage_scope"] = scope
+                else:
+                    return error_response(
+                        "storage_scope 只支持 persona 或 global",
+                        status_code=400,
+                    )
+            if "enable_holiday" in payload:
+                self.config["enable_holiday"] = bool(payload["enable_holiday"])
+            if "enable_outfit" in payload:
+                self.config["enable_outfit"] = bool(payload["enable_outfit"])
+            if "small_ttl_hours" in payload:
+                try:
+                    val = int(payload["small_ttl_hours"])
+                    self.config["small_ttl_hours"] = max(1, min(168, val))
+                except (ValueError, TypeError):
+                    pass
+            if "ongoing_ttl_hours" in payload:
+                try:
+                    val = int(payload["ongoing_ttl_hours"])
+                    self.config["ongoing_ttl_hours"] = max(24, min(720, val))
+                except (ValueError, TypeError):
+                    pass
+            if "max_events" in payload:
+                try:
+                    val = int(payload["max_events"])
+                    self.config["max_events"] = max(10, min(200, val))
+                except (ValueError, TypeError):
+                    pass
+            if "history_plan_days" in payload:
+                try:
+                    val = int(payload["history_plan_days"])
+                    self.config["history_plan_days"] = max(0, min(7, val))
+                except (ValueError, TypeError):
+                    pass
+            if "session_list_mode" in payload:
+                mode = str(payload["session_list_mode"]).lower().strip()
+                if mode in ("all", "whitelist", "blacklist"):
+                    self.config["session_list_mode"] = mode
+
+            # 持久化保存到 AstrBot 配置体系
+            if hasattr(self.config, "save_config"):
+                self.config.save_config()
+                logger.info("[life-memory] 插件配置已保存至磁盘文件")
+
+            return json_response(
+                {
+                    "success": True,
+                    "config": dict(self.config),
+                    "message": "插件配置已成功保存并即时生效",
+                }
+            )
+        except Exception as e:
+            logger.error(f"[life-memory] 保存配置失败: {e}", exc_info=True)
+            return error_response(f"保存配置失败: {e}", status_code=500)

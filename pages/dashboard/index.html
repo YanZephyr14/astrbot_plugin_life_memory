@@ -20,6 +20,9 @@
           <button id="btnAllPersonas" class="btn btn-outline" title="查看所有人格设定与生活状态总览">
             <span>👥</span> 所有人格
           </button>
+          <button id="btnSettings" class="btn btn-outline" title="修改插件配置与参数">
+            <span>⚙️</span> 插件设置
+          </button>
           <button id="btnRefresh" class="btn btn-outline" title="刷新数据">
             <span>🔄</span> 刷新
           </button>
@@ -99,7 +102,12 @@
             <span>📝</span>
             <span>今日生活规划 (Daily Plan)</span>
           </div>
-          <button id="btnTogglePlanEdit" class="btn btn-outline btn-sm">编辑规划</button>
+          <div style="display: flex; gap: 8px;">
+            <button id="btnAutoPlan" class="btn btn-primary btn-sm" title="一键为当前角色生成今日拟真生活起居与日程规划">
+              <span>✨</span> 开始规划
+            </button>
+            <button id="btnTogglePlanEdit" class="btn btn-outline btn-sm">编辑规划</button>
+          </div>
         </div>
 
         <div id="planDisplay" class="plan-display">
@@ -217,10 +225,110 @@
           <button id="btnCloseModal" class="btn-icon" title="关闭">✕</button>
         </div>
         <div class="modal-body">
-          <p class="modal-desc">点击任意角色卡片即可直接切换到该人格的管理视图。</p>
+          <p class="modal-desc">点击任意角色卡片即可直接切换到该人格的管理视图，或点击「开始规划」为未规划角色快速制定今日日程。</p>
           <div id="allPersonasGrid" class="personas-grid">
             <!-- 动态生成各角色卡片 -->
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 插件配置设置模态框 -->
+    <div id="modalSettings" class="modal-overlay" style="display: none;">
+      <div class="modal-card" style="max-width: 680px;">
+        <div class="modal-header">
+          <div class="modal-title">
+            <span>⚙️</span>
+            <span>仿真实生活 - 插件配置中心</span>
+          </div>
+          <button id="btnCloseSettingsModal" class="btn-icon" title="关闭">✕</button>
+        </div>
+        <div class="modal-body">
+          <p class="modal-desc">在此修改生活记忆与拟真运作参数，保存后即时生效并持久化至配置文件。</p>
+
+          <form id="formSettings" class="settings-form">
+            <!-- 核心功能与隔离 -->
+            <div class="settings-group-title">核心功能与隔离模式</div>
+            <div class="setting-item">
+              <div class="setting-info">
+                <label class="setting-label" for="settingEnabled">启用仿真实生活</label>
+                <span class="setting-hint">关掉后不再记录与规划生活，已存的数据安全保留在磁盘上。</span>
+              </div>
+              <input type="checkbox" id="settingEnabled" class="toggle-switch" />
+            </div>
+
+            <div class="setting-item">
+              <div class="setting-info">
+                <label class="setting-label" for="settingStorageScope">存储隔离模式</label>
+                <span class="setting-hint">persona: 按人格角色独立隔离（推荐）；global: 所有角色共用同一生活线。</span>
+              </div>
+              <select id="settingStorageScope" class="select-scope" style="min-width: 220px;">
+                <option value="persona">按人格角色设定独立隔离 (persona - 推荐)</option>
+                <option value="global">全局共用同一生活线 (global)</option>
+              </select>
+            </div>
+
+            <div class="setting-item">
+              <div class="setting-info">
+                <label class="setting-label" for="settingInjectGuide">自动注入提示词说明</label>
+                <span class="setting-hint">每轮对话动态向大模型注入生活记忆操作指引，开箱即用。</span>
+              </div>
+              <input type="checkbox" id="settingInjectGuide" class="toggle-switch" />
+            </div>
+
+            <!-- 生活感知强化 -->
+            <div class="settings-group-title">生活感知与维度</div>
+            <div class="setting-item">
+              <div class="setting-info">
+                <label class="setting-label" for="settingEnableHoliday">节日感知</label>
+                <span class="setting-hint">自动感知法定与传统节日并在规划与日常对话中呈现氛围。</span>
+              </div>
+              <input type="checkbox" id="settingEnableHoliday" class="toggle-switch" />
+            </div>
+
+            <div class="setting-item">
+              <div class="setting-info">
+                <label class="setting-label" for="settingEnableOutfit">穿搭与外貌感知</label>
+                <span class="setting-hint">在每日规划与生活状态中呈现角色穿搭风格与着装。</span>
+              </div>
+              <input type="checkbox" id="settingEnableOutfit" class="toggle-switch" />
+            </div>
+
+            <!-- 记忆时长与容量 -->
+            <div class="settings-group-title">记忆淘汰与容量配额</div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 12px;">
+              <div class="form-group">
+                <label class="form-label" for="settingSmallTtl">小事保留时长（小时）：</label>
+                <input type="number" id="settingSmallTtl" class="input-text" min="1" max="168" />
+                <span class="setting-hint" style="font-size: 11px;">普通小事保留多久，默认 24 小时</span>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="settingOngoingTtl">进行中大事兜底（小时）：</label>
+                <input type="number" id="settingOngoingTtl" class="input-text" min="24" max="720" />
+                <span class="setting-hint" style="font-size: 11px;">进行中大事长效兜底，默认 168 小时（7天）</span>
+              </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px;">
+              <div class="form-group">
+                <label class="form-label" for="settingMaxEvents">事件池最大保留上限：</label>
+                <input type="number" id="settingMaxEvents" class="input-text" min="10" max="200" step="5" />
+                <span class="setting-hint" style="font-size: 11px;">防无限膨胀的事件上限，默认 60 条</span>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="settingHistoryDays">历史规划回顾天数：</label>
+                <input type="number" id="settingHistoryDays" class="input-text" min="0" max="7" />
+                <span class="setting-hint" style="font-size: 11px;">规划新一天时参考历史生活脉络（0~7天）</span>
+              </div>
+            </div>
+
+            <div style="display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid var(--border-color); padding-top: 14px;">
+              <button type="button" id="btnCancelSettings" class="btn btn-outline">取消</button>
+              <button type="submit" id="btnSaveSettings" class="btn btn-primary">
+                <span>💾</span> 保存配置
+              </button>
+            </div>
+          </form>
         </div>
       </div>
     </div>

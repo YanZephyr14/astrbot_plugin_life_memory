@@ -93,3 +93,18 @@
   - [x] 9.5 运行全量单元测试与代码检查，确保 100% 绿色
   - [x] 9.6 提交 Git Commit 并推送至 GitHub 远程仓库，更新 DEVLOG.md
 
+- [x] **Phase 10: 控制台一键开启规划与直接修改插件配置中心 (v1.2.0)**
+  - [x] 10.1 后端 Web API 开发：
+    - [x] 新增 `POST /{PLUGIN_NAME}/dashboard/plan/auto_generate`：支持指定人格，结合时段、节日、历史规划，优先调用 LLM（或自适应拟真生活降级引擎）一键生成并存入规划
+    - [x] 新增 `GET /{PLUGIN_NAME}/dashboard/config`：读取当前生效配置及默认参数
+    - [x] 新增 `POST /{PLUGIN_NAME}/dashboard/config/save`：校验参数合法性，更新运行时 `self.config` 并调用 `save_config()` 持久化至磁盘
+  - [x] 10.2 前端可视化看板与交互升级 (`views/dashboard/` & `pages/dashboard/`)：
+    - [x] 今日规划板块新增「✨ 开始规划」按钮，未规划时提供行内快速规划按键
+    - [x] 所有人格全景模态框中，为未规划角色直接提供「✨ 开始规划」单键触发
+    - [x] 顶部新增「⚙️ 插件设置」按钮与沉浸式配置中心模态框，支持修改核心功能、隔离模式、节日/穿搭感知与淘汰容量
+  - [x] 10.3 单元测试与代码质量验证：
+    - [x] 新增自动规划生成与配置修改的完整单测，全量 26 项单元测试全部通过 (26/26 passed)
+    - [x] `ruff check` 与 `ruff format` 100% 校验通过
+    - [x] 保持双静态目录（`views/` 与 `pages/`）哈希严格一致
+
+

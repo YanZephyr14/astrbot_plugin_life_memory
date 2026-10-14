@@ -10,6 +10,7 @@ let currentOverview = null;
 // DOM 元素 - 顶部导航与通用
 const scopeSelect = document.getElementById("scopeSelect");
 const btnAllPersonas = document.getElementById("btnAllPersonas");
+const btnSettings = document.getElementById("btnSettings");
 const btnRefresh = document.getElementById("btnRefresh");
 const btnClear = document.getElementById("btnClear");
 
@@ -47,6 +48,7 @@ const planTwist = document.getElementById("planTwist");
 const planWeatherRow = document.getElementById("planWeatherRow");
 const planWeather = document.getElementById("planWeather");
 
+const btnAutoPlan = document.getElementById("btnAutoPlan");
 const btnTogglePlanEdit = document.getElementById("btnTogglePlanEdit");
 const planEditForm = document.getElementById("planEditForm");
 const inputPlanDay = document.getElementById("inputPlanDay");
@@ -74,6 +76,22 @@ const countDone = document.getElementById("countDone");
 const modalAllPersonas = document.getElementById("modalAllPersonas");
 const btnCloseModal = document.getElementById("btnCloseModal");
 const allPersonasGrid = document.getElementById("allPersonasGrid");
+
+// DOM 元素 - 插件设置模态框
+const modalSettings = document.getElementById("modalSettings");
+const btnCloseSettingsModal = document.getElementById("btnCloseSettingsModal");
+const btnCancelSettings = document.getElementById("btnCancelSettings");
+const formSettings = document.getElementById("formSettings");
+const settingEnabled = document.getElementById("settingEnabled");
+const settingStorageScope = document.getElementById("settingStorageScope");
+const settingInjectGuide = document.getElementById("settingInjectGuide");
+const settingEnableHoliday = document.getElementById("settingEnableHoliday");
+const settingEnableOutfit = document.getElementById("settingEnableOutfit");
+const settingSmallTtl = document.getElementById("settingSmallTtl");
+const settingOngoingTtl = document.getElementById("settingOngoingTtl");
+const settingMaxEvents = document.getElementById("settingMaxEvents");
+const settingHistoryDays = document.getElementById("settingHistoryDays");
+
 const toast = document.getElementById("toast");
 
 // Toast 提示
@@ -132,6 +150,11 @@ async function loadOverview() {
       statPlanDetail.textContent = data.plan.day || "-";
       planDay.textContent = data.plan.day || "-";
 
+      if (btnAutoPlan) {
+        btnAutoPlan.innerHTML = "<span>🔄</span> 重新规划";
+        btnAutoPlan.title = "为当前角色重新生成今日拟真生活日程与规划";
+      }
+
       if (data.plan.outfit) {
         planOutfit.textContent = data.plan.outfit;
         planOutfitRow.style.display = "flex";
@@ -176,8 +199,19 @@ async function loadOverview() {
       badgePlanStatus.textContent = `今日未规划${slotTag}`;
       badgePlanStatus.className = "badge badge-done";
       statPlanSummary.textContent = "待规划";
-      statPlanDetail.textContent = `当前为 ${data.current_slot || "今天"}，AI 角色将在首轮对话中自动规划`;
-      planDay.textContent = "（今天尚未进行生活规划）";
+      statPlanDetail.textContent = `当前为 ${data.current_slot || "今天"}，点击「开始规划」即可一键制定`;
+      planDay.innerHTML = `（今天尚未进行生活规划） <button id="btnQuickPlanInner" class="btn-quick-plan" style="margin-left: 8px;">✨ 立即规划</button>`;
+      
+      const btnInner = document.getElementById("btnQuickPlanInner");
+      if (btnInner) {
+        btnInner.addEventListener("click", () => triggerAutoPlan(currentScopeKey));
+      }
+
+      if (btnAutoPlan) {
+        btnAutoPlan.innerHTML = "<span>✨</span> 开始规划";
+        btnAutoPlan.title = "一键为当前角色生成今日拟真生活起居与日程规划";
+      }
+
       planOutfitRow.style.display = "none";
       planMoodRow.style.display = "none";
       planLocationRow.style.display = "none";
@@ -504,13 +538,13 @@ function renderAllPersonasModal() {
       : "";
     const planBadge = p.is_today_planned
       ? '<span class="badge badge-ongoing">已规划</span>'
-      : '<span class="badge badge-done">待规划</span>';
+      : `<span class="badge badge-done">待规划</span> <button class="btn-quick-plan btn-plan-single" data-pid="${p.persona_id}" title="立即为该角色制定今日规划">✨ 开始规划</button>`;
 
     item.innerHTML = `
       <div>
         <div class="p-item-header">
           <span class="p-item-name">🎭 ${escapeHtml(p.name || p.persona_id)}</span>
-          <div>${defBadge} ${planBadge}</div>
+          <div style="display: flex; align-items: center; gap: 4px;">${defBadge} ${planBadge}</div>
         </div>
         <div class="p-item-preview" style="margin-top: 8px;">
           ${escapeHtml(p.system_prompt_preview || p.system_prompt || "暂无系统设定")}
@@ -522,6 +556,32 @@ function renderAllPersonasModal() {
         <span>总事件: <b>${p.events_count || 0}</b></span>
       </div>
     `;
+
+    // 绑定卡片头部的开始规划按钮
+    const btnPlanSingle = item.querySelector(".btn-plan-single");
+    if (btnPlanSingle) {
+      btnPlanSingle.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        btnPlanSingle.disabled = true;
+        btnPlanSingle.textContent = "⏳ 规划中...";
+        try {
+          const res = await bridge.apiPost("dashboard/plan/auto_generate", {
+            persona_id: p.persona_id,
+          });
+          showToast(res.message || "已制定规划");
+          const pres = await bridge.apiGet("dashboard/personas");
+          if (pres && pres.personas) allPersonas = pres.personas;
+          renderAllPersonasModal();
+          if (p.persona_id === currentScopeKey) {
+            await refreshAll();
+          }
+        } catch (err) {
+          showToast(`规划失败: ${err.message}`, true);
+          btnPlanSingle.disabled = false;
+          btnPlanSingle.textContent = "✨ 开始规划";
+        }
+      });
+    }
 
     item.addEventListener("click", async () => {
       currentScopeKey = p.persona_id;
@@ -569,6 +629,117 @@ tabItems.forEach((tab) => {
   });
 });
 
+// 一键自动开始规划今日生活
+async function triggerAutoPlan(targetPid) {
+  const pid = targetPid || currentScopeKey;
+  if (!pid) return;
+
+  const isPlanned = currentOverview && currentOverview.is_today_planned;
+  if (
+    isPlanned &&
+    !confirm(`当前角色 [${pid}] 今天已制定过生活规划，是否重新生成覆盖？`)
+  ) {
+    return;
+  }
+
+  if (btnAutoPlan) {
+    btnAutoPlan.disabled = true;
+    btnAutoPlan.innerHTML = "<span>⏳</span> 正在生成...";
+  }
+
+  try {
+    const res = await bridge.apiPost("dashboard/plan/auto_generate", {
+      persona_id: pid,
+    });
+    showToast(res.message || "今日生活规划已制定！");
+    await refreshAll();
+  } catch (err) {
+    showToast(`生成规划失败: ${err.message}`, true);
+  } finally {
+    if (btnAutoPlan) {
+      btnAutoPlan.disabled = false;
+    }
+  }
+}
+
+// 绑定规划按钮
+if (btnAutoPlan) {
+  btnAutoPlan.addEventListener("click", () => triggerAutoPlan(currentScopeKey));
+}
+
+// 打开插件配置模态框
+if (btnSettings) {
+  btnSettings.addEventListener("click", async () => {
+    try {
+      const res = await bridge.apiGet("dashboard/config");
+      const conf = (res && res.config) || {};
+
+      settingEnabled.checked = conf.enabled !== false;
+      settingStorageScope.value = conf.storage_scope || "persona";
+      settingInjectGuide.checked = conf.inject_guide !== false;
+      settingEnableHoliday.checked = conf.enable_holiday !== false;
+      settingEnableOutfit.checked = conf.enable_outfit !== false;
+      settingSmallTtl.value = conf.small_ttl_hours || 24;
+      settingOngoingTtl.value = conf.ongoing_ttl_hours || 168;
+      settingMaxEvents.value = conf.max_events || 60;
+      settingHistoryDays.value =
+        conf.history_plan_days !== undefined ? conf.history_plan_days : 2;
+
+      modalSettings.style.display = "flex";
+    } catch (err) {
+      showToast(`获取插件配置失败: ${err.message}`, true);
+    }
+  });
+}
+
+// 关闭设置模态框
+if (btnCloseSettingsModal) {
+  btnCloseSettingsModal.addEventListener("click", () => {
+    modalSettings.style.display = "none";
+  });
+}
+
+if (btnCancelSettings) {
+  btnCancelSettings.addEventListener("click", () => {
+    modalSettings.style.display = "none";
+  });
+}
+
+if (modalSettings) {
+  modalSettings.addEventListener("click", (e) => {
+    if (e.target === modalSettings) {
+      modalSettings.style.display = "none";
+    }
+  });
+}
+
+// 保存插件配置
+if (formSettings) {
+  formSettings.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const payload = {
+      enabled: settingEnabled.checked,
+      storage_scope: settingStorageScope.value,
+      inject_guide: settingInjectGuide.checked,
+      enable_holiday: settingEnableHoliday.checked,
+      enable_outfit: settingEnableOutfit.checked,
+      small_ttl_hours: Number(settingSmallTtl.value) || 24,
+      ongoing_ttl_hours: Number(settingOngoingTtl.value) || 168,
+      max_events: Number(settingMaxEvents.value) || 60,
+      history_plan_days: Number(settingHistoryDays.value) || 2,
+    };
+
+    try {
+      const res = await bridge.apiPost("dashboard/config/save", payload);
+      showToast(res.message || "插件配置已成功保存！");
+      modalSettings.style.display = "none";
+      await refreshAll();
+    } catch (err) {
+      showToast(`保存配置失败: ${err.message}`, true);
+    }
+  });
+}
+
 async function refreshAll() {
   await loadOverview();
   await loadEvents();
@@ -588,3 +759,4 @@ async function init() {
 }
 
 init();
+
