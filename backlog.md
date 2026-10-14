@@ -59,3 +59,29 @@
     - [x] 编写时段算法、状态注册表、归档、并发锁测试
     - [x] 确保全量测试通过 (20/20 passed)
   - [x] 7.5 代码格式化、Git 提交与 DEVLOG 记录
+
+- [x] **Phase 8: 按人格设定隔离与多角色 Dashboard 升级**
+  - [x] 8.1 隔离逻辑重构 (`main.py`)：
+    - [x] 实现 `get_event_persona_id`：优先从事件上下文中解析当前会话生效的人格 ID，并在 event 中暂存供工具链路复用
+    - [x] 将作用域键从会话 UMO 转向 `persona_id`，老会话模式配置平滑兼容
+    - [x] 升级 LLM 工具（`life_note`, `life_recall`, `life_done`, `life_plan`）与提示词注入，严格按人格独立隔离
+    - [x] 升级指令 `/life status`, `/life recall`, `/life plan`, `/life clear`，显示与操作当前人格
+  - [x] 8.2 多人格 Dashboard 后端 Web API 升级 (`main.py`)：
+    - [x] 新增/升级 `/dashboard/personas`：列出系统中所有可用人格（含系统 Persona 及本地已存人格）的生活状态统计与设定简介
+    - [x] 升级 `/dashboard/overview` 与 `/dashboard/events` 支持基于 `persona_id` 的细粒度过滤与查询
+    - [x] 升级事件录入、标记结束、删除、保存规划、清空等接口，面向指定人格生效
+  - [x] 8.3 Dashboard 前端视图全面升级 (`views/dashboard/` & `pages/dashboard/`)：
+    - [x] 前端界面新增当前人格人设卡片（Persona Info Card），展示角色设定摘要与当前状态
+    - [x] 升级人格切换器，支持查看和切换系统中所有人格
+    - [x] 增加多角色概览看板模态/抽屉，方便全局掌控所有人格生活状态
+    - [x] 保持 `views/` 与 `pages/` 两套静态目录严格一致
+  - [x] 8.4 配置与元数据更新 (`_conf_schema.json`, `metadata.yaml`)：
+    - [x] 将 `storage_scope` 默认值与说明更新为人格设定隔离
+    - [x] 版本提升至 `v1.1.0`
+  - [x] 8.5 单元测试编写与验证：
+    - [x] 编写同人格跨会话共享测试
+    - [x] 编写多人格独立隔离测试
+    - [x] 编写多角色 Dashboard API 单元测试
+    - [x] 确保所有测试 100% 通过 (24/24 passed)
+  - [x] 8.6 代码规范、Git Commit 与 DEVLOG 日志更新
+

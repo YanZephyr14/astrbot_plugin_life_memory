@@ -46,10 +46,10 @@
   },
   "storage_scope": {
     "type": "string",
-    "description": "存储作用域",
-    "hint": "session: 各会话独立记忆生活；global: 全局共用同一份生活线（机器人自己的生活在所有聊天中保持一致）。",
-    "default": "session",
-    "options": ["session", "global"]
+    "description": "存储隔离模式",
+    "hint": "persona: 按人格角色设定独立隔离生活记忆（同一个人格在所有聊天中保持连贯的生活线）；global: 全局共用同一份生活线。",
+    "default": "persona",
+    "options": ["persona", "global"]
   },
   "enable_holiday": {
     "type": "bool",

@@ -3,14 +3,26 @@ const bridge = window.AstrBotPluginPage || window.AstrBotPluginView;
 // 状态管理
 let currentScopeKey = "";
 let allEvents = [];
+let allPersonas = [];
 let currentFilter = "all";
 let currentOverview = null;
 
-// DOM 元素
+// DOM 元素 - 顶部导航与通用
 const scopeSelect = document.getElementById("scopeSelect");
+const btnAllPersonas = document.getElementById("btnAllPersonas");
 const btnRefresh = document.getElementById("btnRefresh");
 const btnClear = document.getElementById("btnClear");
 
+// DOM 元素 - 当前角色人设卡片
+const personaTitle = document.getElementById("personaTitle");
+const personaIdLabel = document.getElementById("personaIdLabel");
+const badgeDefaultPersona = document.getElementById("badgeDefaultPersona");
+const btnTogglePrompt = document.getElementById("btnTogglePrompt");
+const personaPromptBox = document.getElementById("personaPromptBox");
+const personaPromptContent = document.getElementById("personaPromptContent");
+const promptLengthTag = document.getElementById("promptLengthTag");
+
+// DOM 元素 - 指标卡片
 const badgePlanStatus = document.getElementById("badgePlanStatus");
 const statPlanSummary = document.getElementById("statPlanSummary");
 const statPlanDetail = document.getElementById("statPlanDetail");
@@ -19,6 +31,7 @@ const statTodayCount = document.getElementById("statTodayCount");
 const statEventsCount = document.getElementById("statEventsCount");
 const statScopeDesc = document.getElementById("statScopeDesc");
 
+// DOM 元素 - 规划展示与编辑
 const planDisplay = document.getElementById("planDisplay");
 const planDay = document.getElementById("planDay");
 const planOutfitRow = document.getElementById("planOutfitRow");
@@ -45,6 +58,7 @@ const inputPlanWeather = document.getElementById("inputPlanWeather");
 const btnCancelPlan = document.getElementById("btnCancelPlan");
 const btnSavePlan = document.getElementById("btnSavePlan");
 
+// DOM 元素 - 生活事件管理
 const inputEventText = document.getElementById("inputEventText");
 const checkOngoing = document.getElementById("checkOngoing");
 const btnAddEvent = document.getElementById("btnAddEvent");
@@ -56,6 +70,10 @@ const countOngoing = document.getElementById("countOngoing");
 const countToday = document.getElementById("countToday");
 const countDone = document.getElementById("countDone");
 
+// DOM 元素 - 模态框与 Toast
+const modalAllPersonas = document.getElementById("modalAllPersonas");
+const btnCloseModal = document.getElementById("btnCloseModal");
+const allPersonasGrid = document.getElementById("allPersonasGrid");
 const toast = document.getElementById("toast");
 
 // Toast 提示
@@ -77,20 +95,36 @@ function formatTime(ts) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-// 加载概览统计
+// 转义 HTML
+function escapeHtml(str) {
+  if (!str) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+// 加载概览统计与当前角色数据
 async function loadOverview() {
   try {
-    const params = currentScopeKey ? { scope_key: currentScopeKey } : {};
+    const params = currentScopeKey
+      ? { persona_id: currentScopeKey, scope_key: currentScopeKey }
+      : {};
     const data = await bridge.apiGet("dashboard/overview", params);
     currentOverview = data;
-    currentScopeKey = data.current_scope_key || "__default__";
+    currentScopeKey = data.current_persona_id || data.current_scope_key || "default";
+    allPersonas = data.personas || [];
 
-    // 渲染作用域下拉列表
-    renderScopeOptions(data.scopes || [currentScopeKey]);
+    // 1. 渲染当前角色人设卡片
+    renderCurrentPersonaCard(data);
+
+    // 2. 渲染角色下拉列表
+    renderScopeOptions(allPersonas, currentScopeKey);
 
     const slotTag = data.current_slot ? ` · ${data.current_slot}` : "";
 
-    // 统计卡片渲染
+    // 3. 统计卡片渲染
     if (data.is_today_planned && data.plan) {
       badgePlanStatus.textContent = `今日已规划${slotTag}`;
       badgePlanStatus.className = "badge badge-ongoing";
@@ -142,7 +176,7 @@ async function loadOverview() {
       badgePlanStatus.textContent = `今日未规划${slotTag}`;
       badgePlanStatus.className = "badge badge-done";
       statPlanSummary.textContent = "待规划";
-      statPlanDetail.textContent = `当前为 ${data.current_slot || "今天"}，AI 角色将在第一轮对话中自动规划`;
+      statPlanDetail.textContent = `当前为 ${data.current_slot || "今天"}，AI 角色将在首轮对话中自动规划`;
       planDay.textContent = "（今天尚未进行生活规划）";
       planOutfitRow.style.display = "none";
       planMoodRow.style.display = "none";
@@ -155,28 +189,58 @@ async function loadOverview() {
     statOngoingCount.textContent = data.ongoing_count;
     statTodayCount.textContent = data.today_count;
     statEventsCount.textContent = `${data.events_count} / ${data.max_events}`;
-    statScopeDesc.textContent = `作用域模式: ${data.storage_scope} (${currentScopeKey})`;
+    statScopeDesc.textContent = `当前角色生活线: ${currentScopeKey}`;
   } catch (err) {
     showToast(`获取概览失败: ${err.message}`, true);
   }
 }
 
-// 渲染作用域下拉
-function renderScopeOptions(scopes) {
+// 渲染当前角色人设卡片
+function renderCurrentPersonaCard(data) {
+  const name = data.current_persona_name || data.current_persona_id || "default";
+  personaTitle.textContent = name;
+  personaIdLabel.textContent = data.current_persona_id || "default";
+
+  if (data.is_default_persona) {
+    badgeDefaultPersona.style.display = "inline-block";
+  } else {
+    badgeDefaultPersona.style.display = "none";
+  }
+
+  const prompt = data.current_persona_prompt || "";
+  personaPromptContent.textContent = prompt || "（该人格暂未设置独立的 System Prompt 系统提示词）";
+  promptLengthTag.textContent = `${prompt.length} 字`;
+}
+
+// 渲染角色下拉列表
+function renderScopeOptions(personasList, activeKey) {
   scopeSelect.innerHTML = "";
-  for (const s of scopes) {
+
+  if (!personasList || !personasList.length) {
     const opt = document.createElement("option");
-    opt.value = s;
-    opt.textContent = s === "__global__" ? "全局生活线 (__global__)" : s;
-    if (s === currentScopeKey) opt.selected = true;
+    opt.value = activeKey;
+    opt.textContent = activeKey;
+    scopeSelect.appendChild(opt);
+    return;
+  }
+
+  for (const p of personasList) {
+    const opt = document.createElement("option");
+    opt.value = p.persona_id;
+    const isDef = p.is_default ? "🌟 " : "🎭 ";
+    const planTag = p.is_today_planned ? " [已规划]" : " [未规划]";
+    opt.textContent = `${isDef}${p.name || p.persona_id}${planTag}`;
+    if (p.persona_id === activeKey) opt.selected = true;
     scopeSelect.appendChild(opt);
   }
 }
 
-// 加载事件列表
+// 加载当前角色事件列表
 async function loadEvents() {
   try {
-    const params = currentScopeKey ? { scope_key: currentScopeKey } : {};
+    const params = currentScopeKey
+      ? { persona_id: currentScopeKey, scope_key: currentScopeKey }
+      : {};
     const res = await bridge.apiGet("dashboard/events", params);
     allEvents = res.events || [];
     renderEvents();
@@ -187,7 +251,6 @@ async function loadEvents() {
 
 // 渲染事件列表
 function renderEvents() {
-  // 更新各 tab 数字
   const ongoingList = allEvents.filter((e) => e.ongoing);
   const todayList = allEvents.filter((e) => !e.ongoing && e.is_today);
   const doneList = allEvents.filter((e) => !e.ongoing && !e.is_today);
@@ -237,7 +300,6 @@ function renderEvents() {
       </div>
     `;
 
-    // 绑定操作按钮
     const btnDone = card.querySelector(".btn-done");
     if (btnDone) {
       btnDone.addEventListener("click", async () => {
@@ -256,21 +318,12 @@ function renderEvents() {
   }
 }
 
-// 转义 HTML
-function escapeHtml(str) {
-  if (!str) return "";
-  return String(str)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
 // 结束事件
 async function handleDoneEvent(eventId) {
   try {
     const res = await bridge.apiPost("dashboard/event/done", {
       event_id: eventId,
+      persona_id: currentScopeKey,
       scope_key: currentScopeKey,
     });
     showToast(res.message || "已结束事件");
@@ -282,10 +335,11 @@ async function handleDoneEvent(eventId) {
 
 // 删除事件
 async function handleDeleteEvent(eventId) {
-  if (!confirm("确认删除这条生活事件吗？")) return;
+  if (!confirm(`确认删除此事件吗？（当前角色: ${currentScopeKey}）`)) return;
   try {
     const res = await bridge.apiPost("dashboard/event/delete", {
       event_id: eventId,
+      persona_id: currentScopeKey,
       scope_key: currentScopeKey,
     });
     showToast(res.message || "已删除事件");
@@ -307,6 +361,7 @@ btnAddEvent.addEventListener("click", async () => {
     const res = await bridge.apiPost("dashboard/event/add", {
       content,
       ongoing,
+      persona_id: currentScopeKey,
       scope_key: currentScopeKey,
     });
     showToast(res.message || "记录成功");
@@ -339,9 +394,10 @@ btnSavePlan.addEventListener("click", async () => {
       location,
       twist,
       weather,
+      persona_id: currentScopeKey,
       scope_key: currentScopeKey,
     });
-    showToast(res.message || "规划已保存");
+    showToast(res.message || "今日规划已保存");
     planEditForm.style.display = "none";
     planDisplay.style.display = "block";
     btnTogglePlanEdit.textContent = "编辑规划";
@@ -359,7 +415,6 @@ btnTogglePlanEdit.addEventListener("click", () => {
     planDisplay.style.display = "block";
     btnTogglePlanEdit.textContent = "编辑规划";
   } else {
-    // 预填当前规划
     if (currentOverview && currentOverview.plan) {
       inputPlanDay.value = currentOverview.plan.day || "";
       inputPlanOutfit.value = currentOverview.plan.outfit || "";
@@ -387,13 +442,30 @@ btnCancelPlan.addEventListener("click", () => {
   btnTogglePlanEdit.textContent = "编辑规划";
 });
 
-// 清空当前会话数据
+// 人设 Prompt 折叠切换
+btnTogglePrompt.addEventListener("click", () => {
+  const isVisible = personaPromptBox.style.display !== "none";
+  if (isVisible) {
+    personaPromptBox.style.display = "none";
+    btnTogglePrompt.textContent = "查看人设 Prompt";
+  } else {
+    personaPromptBox.style.display = "block";
+    btnTogglePrompt.textContent = "收起人设 Prompt";
+  }
+});
+
+// 清空当前角色生活数据
 btnClear.addEventListener("click", async () => {
-  if (!confirm(`确认清空作用域 [${currentScopeKey}] 下的所有生活数据吗？此操作不可逆。`)) {
+  if (
+    !confirm(
+      `确认清空角色 [${currentScopeKey}] 下的所有生活事件与规划吗？此操作不可逆。`
+    )
+  ) {
     return;
   }
   try {
     const res = await bridge.apiPost("dashboard/clear", {
+      persona_id: currentScopeKey,
       scope_key: currentScopeKey,
     });
     showToast(res.message || "已清空数据");
@@ -409,10 +481,82 @@ btnRefresh.addEventListener("click", async () => {
   showToast("数据已刷新");
 });
 
-// 作用域下拉切换
+// 角色下拉切换
 scopeSelect.addEventListener("change", async (e) => {
   currentScopeKey = e.target.value;
   await refreshAll();
+});
+
+// 渲染所有人格全景模态框
+function renderAllPersonasModal() {
+  allPersonasGrid.innerHTML = "";
+  if (!allPersonas.length) {
+    allPersonasGrid.innerHTML = '<div class="empty-state">暂无角色数据</div>';
+    return;
+  }
+
+  for (const p of allPersonas) {
+    const item = document.createElement("div");
+    item.className = `persona-grid-item ${p.persona_id === currentScopeKey ? "active" : ""}`;
+
+    const defBadge = p.is_default
+      ? '<span class="badge badge-default">默认</span>'
+      : "";
+    const planBadge = p.is_today_planned
+      ? '<span class="badge badge-ongoing">已规划</span>'
+      : '<span class="badge badge-done">待规划</span>';
+
+    item.innerHTML = `
+      <div>
+        <div class="p-item-header">
+          <span class="p-item-name">🎭 ${escapeHtml(p.name || p.persona_id)}</span>
+          <div>${defBadge} ${planBadge}</div>
+        </div>
+        <div class="p-item-preview" style="margin-top: 8px;">
+          ${escapeHtml(p.system_prompt_preview || p.system_prompt || "暂无系统设定")}
+        </div>
+      </div>
+      <div class="p-item-footer">
+        <span>进行中: <b>${p.ongoing_count || 0}</b></span>
+        <span>今日做过: <b>${p.today_count || 0}</b></span>
+        <span>总事件: <b>${p.events_count || 0}</b></span>
+      </div>
+    `;
+
+    item.addEventListener("click", async () => {
+      currentScopeKey = p.persona_id;
+      modalAllPersonas.style.display = "none";
+      await refreshAll();
+      showToast(`已切换至角色: ${p.name || p.persona_id}`);
+    });
+
+    allPersonasGrid.appendChild(item);
+  }
+}
+
+// 打开所有人格模态框
+btnAllPersonas.addEventListener("click", async () => {
+  try {
+    const res = await bridge.apiGet("dashboard/personas");
+    if (res && res.personas) {
+      allPersonas = res.personas;
+    }
+  } catch (err) {
+    console.warn("加载 personas 列表失败，回退至缓存:", err);
+  }
+  renderAllPersonasModal();
+  modalAllPersonas.style.display = "flex";
+});
+
+// 关闭模态框
+btnCloseModal.addEventListener("click", () => {
+  modalAllPersonas.style.display = "none";
+});
+
+modalAllPersonas.addEventListener("click", (e) => {
+  if (e.target === modalAllPersonas) {
+    modalAllPersonas.style.display = "none";
+  }
 });
 
 // Tab 切换
@@ -439,7 +583,6 @@ async function init() {
     await refreshAll();
   } catch (e) {
     console.error("Bridge ready failed:", e);
-    // 即使降级环境也尝试拉取
     await refreshAll();
   }
 }

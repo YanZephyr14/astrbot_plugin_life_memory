@@ -15,16 +15,46 @@
           <h1>仿真实生活控制台</h1>
         </div>
         <div class="header-actions">
-          <label for="scopeSelect" style="font-size: 13px; color: var(--text-secondary);">作用域：</label>
+          <label for="scopeSelect" style="font-size: 13px; color: var(--text-secondary);">当前角色：</label>
           <select id="scopeSelect" class="select-scope"></select>
+          <button id="btnAllPersonas" class="btn btn-outline" title="查看所有人格设定与生活状态总览">
+            <span>👥</span> 所有人格
+          </button>
           <button id="btnRefresh" class="btn btn-outline" title="刷新数据">
             <span>🔄</span> 刷新
           </button>
-          <button id="btnClear" class="btn btn-danger-outline" title="清空当前会话数据">
-            <span>🗑️</span> 清空
+          <button id="btnClear" class="btn btn-danger-outline" title="清空当前角色生活数据">
+            <span>🗑️</span> 清空数据
           </button>
         </div>
       </header>
+
+      <!-- 当前角色人设与信息卡片 -->
+      <section class="persona-card" id="personaCard">
+        <div class="persona-card-header">
+          <div class="persona-badge-group">
+            <span class="persona-avatar">🎭</span>
+            <div>
+              <div class="persona-name-wrap">
+                <h2 id="personaTitle" class="persona-title">加载中...</h2>
+                <span id="badgeDefaultPersona" class="badge badge-default" style="display: none;">系统默认人格</span>
+              </div>
+              <div class="persona-id-sub">Persona ID: <code id="personaIdLabel">-</code></div>
+            </div>
+          </div>
+          <div class="persona-actions">
+            <button id="btnTogglePrompt" class="btn btn-outline btn-xs">查看人设 Prompt</button>
+          </div>
+        </div>
+        <!-- 人设 Prompt 抽屉 (默认折叠) -->
+        <div id="personaPromptBox" class="persona-prompt-box" style="display: none;">
+          <div class="prompt-box-header">
+            <span>📜 人格系统设定 (System Prompt)</span>
+            <span id="promptLengthTag" class="tag-sm">0 字</span>
+          </div>
+          <pre id="personaPromptContent" class="prompt-text">暂无设定</pre>
+        </div>
+      </section>
 
       <!-- 概览指标卡片 -->
       <section class="stats-grid">
@@ -58,7 +88,7 @@
             <span>📚</span>
           </div>
           <div class="stat-value" id="statEventsCount">0 / 60</div>
-          <div class="stat-footer" id="statScopeDesc">作用域: session</div>
+          <div class="stat-footer" id="statScopeDesc">隔离模式: persona</div>
         </div>
       </section>
 
@@ -174,6 +204,25 @@
           <div class="empty-state">正在加载生活记忆...</div>
         </div>
       </section>
+    </div>
+
+    <!-- 所有人格概览模态框 -->
+    <div id="modalAllPersonas" class="modal-overlay" style="display: none;">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="modal-title">
+            <span>👥</span>
+            <span>系统所有人格与生活状态全景</span>
+          </div>
+          <button id="btnCloseModal" class="btn-icon" title="关闭">✕</button>
+        </div>
+        <div class="modal-body">
+          <p class="modal-desc">点击任意角色卡片即可直接切换到该人格的管理视图。</p>
+          <div id="allPersonasGrid" class="personas-grid">
+            <!-- 动态生成各角色卡片 -->
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- 浮层 Toast -->

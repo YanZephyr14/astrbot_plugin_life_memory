@@ -11,6 +11,7 @@ from __future__ import annotations
 import time
 import uuid
 from pathlib import Path
+from typing import Any
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
@@ -117,6 +118,12 @@ class LifeMemoryPlugin(Star):
             ["POST"],
             "Clear all data for a scope",
         )
+        context.register_web_api(
+            f"/{PLUGIN_NAME}/dashboard/personas",
+            self.api_dashboard_personas,
+            ["GET"],
+            "Get all personas list with life memory summary",
+        )
 
     async def initialize(self) -> None:
         """异步初始化插件，准备存储目录与数据连接。"""
@@ -136,10 +143,124 @@ class LifeMemoryPlugin(Star):
         """插件销毁与清理。"""
         logger.info("[life-memory] 仿真实生活插件已卸载")
 
-    def _get_scope_key(self, event: AstrMessageEvent) -> str:
-        """获取当前事件对应的数据隔离键。
+    def _get_default_persona_id(self) -> str:
+        """获取系统默认人格 ID，安全校验类型并兜底 default。"""
+        if hasattr(self.context, "persona_manager") and self.context.persona_manager:
+            val = getattr(self.context.persona_manager, "default_persona", None)
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+        return "default"
 
-        根据配置中的 storage_scope 判断是全局共享还是会话级独立隔离。
+    async def get_event_persona_id(
+        self, event: AstrMessageEvent, req: ProviderRequest | None = None
+    ) -> str:
+        """解析当前事件对应生效的人格唯一标识 (persona_id)。
+
+        按优先级：
+        1. 优先读取本轮已暂存到 event extra 中的 persona_id；
+        2. 从 req.conversation 中读取 conversation_persona_id；
+        3. 从 conversation_manager 中读取当前会话绑定的 persona_id；
+        4. 通过 persona_manager.resolve_selected_persona 解析生效的人格；
+        5. 兜底回退到系统默认人格 default。
+
+        Args:
+            event: AstrBot 消息事件。
+            req: ProviderRequest 请求对象（可选）。
+
+        Returns:
+            生效的人格标识字符串。
+        """
+        # 1. 优先读取已暂存的人格标识
+        if hasattr(event, "get_extra"):
+            extra_pid = event.get_extra("life_memory_persona_id")
+            if extra_pid and str(extra_pid).strip():
+                return str(extra_pid).strip()
+
+        # 2. 从 req.conversation 中获取
+        conv_persona_id = None
+        if req and getattr(req, "conversation", None):
+            conv_persona_id = getattr(req.conversation, "persona_id", None)
+
+        # 3. 从 conversation_manager 查询当前会话绑定的 persona_id
+        umo = getattr(event, "unified_msg_origin", None) or ""
+        if (
+            not conv_persona_id
+            and hasattr(self.context, "conversation_manager")
+            and self.context.conversation_manager
+            and umo
+        ):
+            try:
+                curr_cid = (
+                    await self.context.conversation_manager.get_curr_conversation_id(
+                        umo
+                    )
+                )
+                if curr_cid:
+                    conv = await self.context.conversation_manager.get_conversation(
+                        umo, curr_cid
+                    )
+                    if conv:
+                        conv_persona_id = getattr(conv, "persona_id", None)
+            except Exception as e:
+                logger.debug(
+                    f"[life-memory] 从 conversation_manager 获取 persona_id 失败: {e}"
+                )
+
+        # 4. 从 persona_manager 解析生效的人格
+        resolved_pid = None
+        if hasattr(self.context, "persona_manager") and self.context.persona_manager:
+            try:
+                platform_name = (
+                    event.get_platform_name()
+                    if hasattr(event, "get_platform_name")
+                    else "unknown"
+                )
+                (
+                    pid,
+                    _,
+                    _,
+                    _,
+                ) = await self.context.persona_manager.resolve_selected_persona(
+                    umo=umo,
+                    conversation_persona_id=conv_persona_id,
+                    platform_name=platform_name,
+                )
+                if pid and isinstance(pid, str):
+                    resolved_pid = pid.strip()
+            except Exception as e:
+                logger.debug(f"[life-memory] 从 persona_manager 解析 persona 失败: {e}")
+
+        # 5. 兜底回退
+        if not resolved_pid:
+            resolved_pid = self._get_default_persona_id()
+
+        if hasattr(event, "set_extra"):
+            event.set_extra("life_memory_persona_id", resolved_pid)
+
+        return resolved_pid
+
+    async def _get_scope_key_async(
+        self, event: AstrMessageEvent, req: ProviderRequest | None = None
+    ) -> str:
+        """异步获取当前事件对应的数据隔离键。
+
+        根据 storage_scope 判断是全局共享还是按人格设定隔离。
+
+        Args:
+            event: 消息事件。
+            req: LLM 请求对象（可选）。
+
+        Returns:
+            存储作用域标识字符串（全局为 __global__，否则为 persona_id）。
+        """
+        scope = str(self.config.get("storage_scope", "persona")).lower().strip()
+        if scope == "global":
+            return "__global__"
+        # 默认按人格隔离（包含旧 session 配置平滑迁移）
+        return await self.get_event_persona_id(event, req)
+
+    def _get_scope_key(self, event: AstrMessageEvent) -> str:
+        """获取当前事件对应的数据隔离键（同步降级）。
 
         Args:
             event: 消息事件。
@@ -147,10 +268,129 @@ class LifeMemoryPlugin(Star):
         Returns:
             存储作用域标识字符串。
         """
-        scope = str(self.config.get("storage_scope", "session")).lower()
+        scope = str(self.config.get("storage_scope", "persona")).lower().strip()
         if scope == "global":
             return "__global__"
-        return event.unified_msg_origin or event.get_session_id() or "__default__"
+        if hasattr(event, "get_extra"):
+            extra_pid = event.get_extra("life_memory_persona_id")
+            if extra_pid and str(extra_pid).strip():
+                return str(extra_pid).strip()
+        return self._get_default_persona_id()
+
+    async def get_all_personas_data(self) -> list[dict[str, Any]]:
+        """获取系统中所有人格的元数据与其生活记忆概览。
+
+        聚合 AstrBot 系统中的 Persona 定义与磁盘上已存在的生活数据。
+
+        Returns:
+            包含各人格 ID、设定预览、今日规划状态、事件统计的列表。
+        """
+        persona_map: dict[str, dict[str, Any]] = {}
+        default_pid = self._get_default_persona_id()
+
+        # 1. 从 persona_manager 读取系统已配置的人格
+        if hasattr(self.context, "persona_manager") and self.context.persona_manager:
+            pm = self.context.persona_manager
+
+            # 优先从数据库查询
+            try:
+                if hasattr(pm, "get_all_personas"):
+                    db_personas = await pm.get_all_personas()
+                    for p in db_personas:
+                        pid = str(getattr(p, "persona_id", "")).strip()
+                        if not pid:
+                            continue
+                        prompt = str(getattr(p, "system_prompt", "") or "")
+                        persona_map[pid] = {
+                            "persona_id": pid,
+                            "name": pid,
+                            "system_prompt": prompt,
+                            "system_prompt_preview": prompt[:160]
+                            + ("..." if len(prompt) > 160 else ""),
+                            "is_default": pid == default_pid,
+                            "has_data": False,
+                        }
+            except Exception as e:
+                logger.debug(f"[life-memory] get_all_personas 读取失败: {e}")
+
+            # 补充从 personas_v3 读取
+            if hasattr(pm, "personas_v3") and pm.personas_v3:
+                for item in pm.personas_v3:
+                    if isinstance(item, dict):
+                        pid = str(item.get("name", "")).strip()
+                        if pid and pid not in persona_map:
+                            prompt = str(item.get("prompt", "") or "")
+                            persona_map[pid] = {
+                                "persona_id": pid,
+                                "name": pid,
+                                "system_prompt": prompt,
+                                "system_prompt_preview": prompt[:160]
+                                + ("..." if len(prompt) > 160 else ""),
+                                "is_default": pid == default_pid,
+                                "has_data": False,
+                            }
+
+        # 确保 default 人格存在
+        if default_pid not in persona_map:
+            persona_map[default_pid] = {
+                "persona_id": default_pid,
+                "name": default_pid,
+                "system_prompt": "系统默认人格设定",
+                "system_prompt_preview": "系统默认人格设定",
+                "is_default": True,
+                "has_data": False,
+            }
+
+        # 2. 结合磁盘上已有的生活数据 scopes
+        if self.store:
+            scopes = self.store.list_scopes()
+            for s in scopes:
+                if s not in persona_map:
+                    persona_map[s] = {
+                        "persona_id": s,
+                        "name": s,
+                        "system_prompt": "",
+                        "system_prompt_preview": "（未在系统中配置的角色或历史数据）",
+                        "is_default": s == default_pid,
+                        "has_data": True,
+                    }
+
+        # 3. 统计每个人格的生活记忆数据
+        results: list[dict[str, Any]] = []
+        for pid, info in persona_map.items():
+            if self.store:
+                events = self.store.prune_and_get(pid)
+                plan = self.store.read_plan(pid)
+                ongoing = [e for e in events if e.get("ongoing")]
+                today_events = [
+                    e for e in events if not e.get("ongoing") and is_today(e.get("at"))
+                ]
+                has_today_plan = bool(plan and is_today(plan.get("date")))
+                has_data = bool(events or plan)
+
+                info["has_data"] = has_data
+                info["is_today_planned"] = has_today_plan
+                info["plan_summary"] = (
+                    str(plan.get("day", "")) if has_today_plan and plan else ""
+                )
+                info["ongoing_count"] = len(ongoing)
+                info["today_count"] = len(today_events)
+                info["events_count"] = len(events)
+            else:
+                info["has_data"] = False
+                info["is_today_planned"] = False
+                info["plan_summary"] = ""
+                info["ongoing_count"] = 0
+                info["today_count"] = 0
+                info["events_count"] = 0
+
+            results.append(info)
+
+        # 排序：默认人格放最前，其余按 persona_id 字母排序
+        results.sort(
+            key=lambda x: (not x.get("is_default", False), x.get("persona_id", ""))
+        )
+        return results
 
     def _is_session_enabled(self, unified_msg_origin: str) -> bool:
         """检查当前会话是否在允许的启用范围内。
@@ -200,7 +440,7 @@ class LifeMemoryPlugin(Star):
             if not self.store:
                 return "存储未就绪，记录失败。"
 
-            scope_key = self._get_scope_key(event)
+            scope_key = await self._get_scope_key_async(event)
             async with self.store.get_scope_lock(scope_key):
                 events = self.store.prune_and_get(scope_key)
                 now_ms = int(time.time() * 1000)
@@ -249,7 +489,7 @@ class LifeMemoryPlugin(Star):
             if not self.store:
                 return "存储未就绪。"
 
-            scope_key = self._get_scope_key(event)
+            scope_key = await self._get_scope_key_async(event)
             events = self.store.prune_and_get(scope_key)
             now_ms = int(time.time() * 1000)
             small_ttl_hours = float(self.config.get("small_ttl_hours", 24.0))
@@ -315,7 +555,7 @@ class LifeMemoryPlugin(Star):
             if not self.store:
                 return "存储未就绪。"
 
-            scope_key = self._get_scope_key(event)
+            scope_key = await self._get_scope_key_async(event)
             async with self.store.get_scope_lock(scope_key):
                 events = self.store.read_events(scope_key)
                 done_count = 0
@@ -375,7 +615,7 @@ class LifeMemoryPlugin(Star):
             if not self.store:
                 return "存储未就绪。"
 
-            scope_key = self._get_scope_key(event)
+            scope_key = await self._get_scope_key_async(event)
             async with self.store.get_scope_lock(scope_key):
                 now_ms = int(time.time() * 1000)
                 holiday = "无"
@@ -436,7 +676,7 @@ class LifeMemoryPlugin(Star):
             if not self.store:
                 return
 
-            scope_key = self._get_scope_key(event)
+            scope_key = await self._get_scope_key_async(event, req)
             events = self.store.prune_and_get(scope_key)
             plan = self.store.read_plan(scope_key)
 
@@ -574,12 +814,15 @@ class LifeMemoryPlugin(Star):
         """生活记忆指令组。"""
 
     @life.command("status")
-    async def status(self, event: AstrMessageEvent):
-        """查看当前生活记忆状态与今日规划。"""
+    async def status(self, event: AstrMessageEvent, persona_id: str = ""):
+        """查看当前生活记忆状态与今日规划。可选传入指定 persona_id。"""
         if not self.store:
             yield event.plain_result("存储未初始化。")
             return
-        scope_key = self._get_scope_key(event)
+        target_pid = str(persona_id or "").strip()
+        if not target_pid:
+            target_pid = await self._get_scope_key_async(event)
+        scope_key = target_pid
         events = self.store.prune_and_get(scope_key)
         plan = self.store.read_plan(scope_key)
 
@@ -594,7 +837,7 @@ class LifeMemoryPlugin(Star):
 
         lines = [
             "【生活记忆状态】",
-            f"· 当前作用域: {scope_key}",
+            f"· 当前人格: {scope_key}",
             f"· 当前时间/时段: {now_time_str}（{current_slot}）",
             f"· 事件总数: {len(events)} 条",
             f"· 进行中大事: {len(ongoing)} 条",
@@ -620,8 +863,11 @@ class LifeMemoryPlugin(Star):
         yield event.plain_result("\n".join(lines))
 
     @life.command("recall")
-    async def cmd_recall(self, event: AstrMessageEvent):
-        """手动回忆生活事件。"""
+    async def cmd_recall(self, event: AstrMessageEvent, persona_id: str = ""):
+        """手动回忆生活事件。可选传入指定 persona_id。"""
+        target_pid = str(persona_id or "").strip()
+        if target_pid and hasattr(event, "set_extra"):
+            event.set_extra("life_memory_persona_id", target_pid)
         res = await self.life_recall(event)
         yield event.plain_result(res)
 
@@ -632,38 +878,67 @@ class LifeMemoryPlugin(Star):
         yield event.plain_result(res)
 
     @life.command("clear")
-    async def cmd_clear(self, event: AstrMessageEvent):
-        """清空当前会话的生活记忆数据。"""
+    async def cmd_clear(self, event: AstrMessageEvent, persona_id: str = ""):
+        """清空指定人格的生活记忆数据。可选传入指定 persona_id。"""
         if not self.store:
             yield event.plain_result("存储未初始化。")
             return
-        scope_key = self._get_scope_key(event)
+        target_pid = str(persona_id or "").strip()
+        if not target_pid:
+            target_pid = await self._get_scope_key_async(event)
+        scope_key = target_pid
         self.store.clear(scope_key)
-        yield event.plain_result(f"已清空作用域 [{scope_key}] 的所有生活事件与规划。")
+        yield event.plain_result(
+            f"已清空作用域（人格 [{scope_key}]）的所有生活事件与规划。"
+        )
 
     # ==========================================
     # 可视化视图后端 Web API Handlers
     # ==========================================
 
     def _resolve_scope_key(self, raw_scope: str | None = None) -> str:
-        """解析当前 Dashboard 请求的目标作用域标识。"""
-        scope_setting = str(self.config.get("storage_scope", "session")).lower()
+        """解析当前 Dashboard 请求的目标人格作用域标识。"""
+        scope_setting = str(self.config.get("storage_scope", "persona")).lower().strip()
         if scope_setting == "global":
             return "__global__"
         if raw_scope and str(raw_scope).strip():
             safe = str(raw_scope).strip()
             return self.store.get_safe_key(safe) if self.store else safe
-        return "__default__"
+        return self._get_default_persona_id()
+
+    async def api_dashboard_personas(self):
+        """Dashboard 获取所有人格列表及其生活记忆概览接口。"""
+        if not self.store:
+            return error_response("存储未初始化", status_code=500)
+        try:
+            personas_data = await self.get_all_personas_data()
+            default_pid = self._get_default_persona_id()
+            return json_response(
+                {
+                    "personas": personas_data,
+                    "default_persona_id": default_pid,
+                    "total": len(personas_data),
+                }
+            )
+        except Exception as e:
+            logger.error(f"[life-memory] 获取 personas 列表失败: {e}", exc_info=True)
+            return error_response(f"获取人格列表失败: {e}", status_code=500)
 
     async def api_dashboard_overview(self):
         """Dashboard 数据概览接口。"""
         if not self.store:
             return error_response("存储未初始化", status_code=500)
-        raw_scope = request.query.get("scope_key")
+        raw_scope = request.query.get("persona_id") or request.query.get("scope_key")
         scope_key = self._resolve_scope_key(raw_scope)
-        scopes = self.store.list_scopes()
+        all_personas = await self.get_all_personas_data()
+        scopes = [p["persona_id"] for p in all_personas]
         if scope_key not in scopes and scope_key:
             scopes.insert(0, scope_key)
+
+        current_persona = next(
+            (p for p in all_personas if p["persona_id"] == scope_key), None
+        )
+
         events = self.store.prune_and_get(scope_key)
         plan = self.store.read_plan(scope_key)
         ongoing = [e for e in events if e.get("ongoing")]
@@ -678,13 +953,27 @@ class LifeMemoryPlugin(Star):
 
         return json_response(
             {
-                "storage_scope": str(self.config.get("storage_scope", "session")),
+                "storage_scope": str(self.config.get("storage_scope", "persona")),
                 "current_scope_key": scope_key,
+                "current_persona_id": scope_key,
+                "current_persona_name": current_persona.get("name")
+                if current_persona
+                else scope_key,
+                "current_persona_prompt": current_persona.get("system_prompt")
+                if current_persona
+                else "",
+                "current_persona_preview": current_persona.get("system_prompt_preview")
+                if current_persona
+                else "",
+                "is_default_persona": bool(current_persona.get("is_default"))
+                if current_persona
+                else (scope_key == "default"),
                 "current_slot": current_slot,
                 "current_time_str": f"{current_minute // 60:02d}:{current_minute % 60:02d}",
                 "today_holiday": today_holiday,
                 "history_plans": history_plans,
                 "scopes": scopes,
+                "personas": all_personas,
                 "events_count": len(events),
                 "ongoing_count": len(ongoing),
                 "today_count": len(today_events),
@@ -704,7 +993,7 @@ class LifeMemoryPlugin(Star):
         """Dashboard 事件列表接口。"""
         if not self.store:
             return error_response("存储未初始化", status_code=500)
-        raw_scope = request.query.get("scope_key")
+        raw_scope = request.query.get("persona_id") or request.query.get("scope_key")
         scope_key = self._resolve_scope_key(raw_scope)
         events = self.store.prune_and_get(scope_key)
         result = []
@@ -712,7 +1001,13 @@ class LifeMemoryPlugin(Star):
             item = dict(e)
             item["is_today"] = is_today(e.get("at"))
             result.append(item)
-        return json_response({"events": result, "scope_key": scope_key})
+        return json_response(
+            {
+                "events": result,
+                "scope_key": scope_key,
+                "persona_id": scope_key,
+            }
+        )
 
     async def api_dashboard_add_event(self):
         """Dashboard 手动新增生活事件接口。"""
@@ -723,7 +1018,7 @@ class LifeMemoryPlugin(Star):
         if not content:
             return error_response("事件内容不能为空", status_code=400)
         ongoing = bool(payload.get("ongoing", False))
-        raw_scope = payload.get("scope_key")
+        raw_scope = payload.get("persona_id") or payload.get("scope_key")
         scope_key = self._resolve_scope_key(raw_scope)
         async with self.store.get_scope_lock(scope_key):
             events = self.store.prune_and_get(scope_key)
@@ -776,7 +1071,7 @@ class LifeMemoryPlugin(Star):
         event_id = str(payload.get("event_id", "")).strip()
         if not event_id:
             return error_response("缺少事件 ID", status_code=400)
-        raw_scope = payload.get("scope_key")
+        raw_scope = payload.get("persona_id") or payload.get("scope_key")
         scope_key = self._resolve_scope_key(raw_scope)
         async with self.store.get_scope_lock(scope_key):
             ok = self.store.mark_event_done(scope_key, event_id)
@@ -792,7 +1087,7 @@ class LifeMemoryPlugin(Star):
         event_id = str(payload.get("event_id", "")).strip()
         if not event_id:
             return error_response("缺少事件 ID", status_code=400)
-        raw_scope = payload.get("scope_key")
+        raw_scope = payload.get("persona_id") or payload.get("scope_key")
         scope_key = self._resolve_scope_key(raw_scope)
         async with self.store.get_scope_lock(scope_key):
             ok = self.store.delete_event(scope_key, event_id)
@@ -814,7 +1109,7 @@ class LifeMemoryPlugin(Star):
         mood = str(payload.get("mood", "")).strip()[:40]
         location = str(payload.get("location", "")).strip()[:60]
         holiday = str(payload.get("holiday", "")).strip()[:40] or get_today_holiday()
-        raw_scope = payload.get("scope_key")
+        raw_scope = payload.get("persona_id") or payload.get("scope_key")
         scope_key = self._resolve_scope_key(raw_scope)
         async with self.store.get_scope_lock(scope_key):
             now_ms = int(time.time() * 1000)
@@ -837,7 +1132,7 @@ class LifeMemoryPlugin(Star):
                 {
                     "success": True,
                     "plan": plan_data,
-                    "message": "今日规划已成功更新",
+                    "message": f"人格 [{scope_key}] 今日规划已成功更新",
                 }
             )
 
@@ -846,13 +1141,13 @@ class LifeMemoryPlugin(Star):
         if not self.store:
             return error_response("存储未初始化", status_code=500)
         payload = await request.json(default={})
-        raw_scope = payload.get("scope_key")
+        raw_scope = payload.get("persona_id") or payload.get("scope_key")
         scope_key = self._resolve_scope_key(raw_scope)
         async with self.store.get_scope_lock(scope_key):
             self.store.clear(scope_key)
             return json_response(
                 {
                     "success": True,
-                    "message": f"已清空作用域 [{scope_key}] 的所有生活数据",
+                    "message": f"已清空人格 [{scope_key}] 的所有生活数据",
                 }
             )
