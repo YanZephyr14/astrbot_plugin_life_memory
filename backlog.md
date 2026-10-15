@@ -146,5 +146,24 @@
     - [x] `ruff check` 与 `ruff format` 100% 通过
     - [x] 升级 `metadata.yaml` 版本至 `v1.3.1`
 
-
-
+- [x] **Phase 13: 插件市场发布规范化与双语国际化 (v1.4.0)**
+  - [x] 13.1 插件市场元数据规范化：
+    - [x] 升级版本号至 `1.4.0`（移除 `v` 前缀，严格遵循语义化版本规范）
+    - [x] 增加 `short_desc`，让插件市场卡片展示更加精准吸睛
+    - [x] 补充 Markdown 格式的高清功能特性描述 `desc`
+    - [x] 增加 `tags`（`memory`, `persona`, `roleplay`, `life`）
+    - [x] 声明平台兼容性 `support_platforms`，全主流平台支持
+    - [x] 规范化 `author` 与 `repo` 链接一致性
+  - [x] 13.2 国际化 (i18n) 体系完善：
+    - [x] 完善 `zh-CN.json`：补充 `config` 下各配置项文案与下拉选项 `labels`
+    - [x] 新增 `en-US.json`：提供完整的英文元数据、配置项与 Dashboard 视图文案
+  - [x] 13.3 规范化配置 Schema 与更新日志：
+    - [x] 规范化 `_conf_schema.json` 中的各字段定义与范围
+    - [x] 创建面向终端用户的规范 `CHANGELOG.md`，按版本倒序记录演进历史
+  - [x] 13.4 视图与包体积瘦身：
+    - [x] 移除冗余文件，确保包体远低于 16MB 插件市场限制
+    - [x] 添加标准 MIT License 与完善 `.gitignore`
+    - [x] 在插件专属仓库内内置 `tests/` 自动化测试集
+  - [x] 13.5 全量测试验证与代码质量：
+    - [x] 运行 37 项单元与集成测试，100% 绿色通过
+    - [x] `ruff check` 与 `ruff format` 100% 通过

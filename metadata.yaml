@@ -1,7 +1,32 @@
 name: "astrbot_plugin_life_memory"
 display_name: "拟真生活 (Life Memory)"
-desc: "给 AI 角色一个仿真实的生活：每日规划今日生活，记录当天小事与进行中大事，每轮动态注入生活记忆，前后一致有日常有起伏。"
-version: "v1.3.2"
-author: "Soulter & AstrBot Community (Ref: 小肥鱼)"
+short_desc: "为 AI 角色提供拟真的生活记忆层，支持每日起居规划、进行中大事与小事动态注入。"
+desc: |
+  为 AI 角色提供仿真的生活记忆层：
+  - 🌅 **每日生活起居规划**：每天第一次上线规划今日行程与心境，支持时段、节日、穿搭与天气感知；
+  - 🔄 **事件双轨生命周期**：当天小事记一天（隔天自动淡忘），进行中大事长兜底跨天保留；
+  - ⚡ **动态提示词注入**：单轮临时注入（不污染系统提示词与服务端 Prompt 缓存），聊到相关话题自然接茬；
+  - 🎭 **多角色独立隔离**：多 Persona 角色生活线完全独立，支持白名单控制；
+  - 📊 **可视化 WebUI 看板**：内置全功能 Dashboard，在线一键生成起居规划与管理生活事件。
+version: "1.4.0"
+author: "YanZephyr14 & AstrBot Community (Ref: Soulter, 小肥鱼)"
 repo: "https://github.com/YanZephyr14/astrbot_plugin_life_memory"
 astrbot_version: ">=4.5.7"
+tags:
+  - memory
+  - persona
+  - roleplay
+  - life
+support_platforms:
+  - aiocqhttp
+  - qq_official
+  - qq_official_webhook
+  - telegram
+  - wecom
+  - wecom_ai_bot
+  - lark
+  - dingtalk
+  - discord
+  - slack
+  - kook
+  - satori

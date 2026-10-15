@@ -1,0 +1,69 @@
+{
+  "metadata": {
+    "display_name": "Life Memory",
+    "short_desc": "Realistic life memory and daily routine layer for AI personas",
+    "desc": "Provides a realistic life memory layer for AI personas: daily routine planning, tracking daily minor events and ongoing events, and dynamic prompt injection to keep daily life vivid and consistent."
+  },
+  "config": {
+    "enabled": {
+      "description": "Enable Life Memory",
+      "hint": "When disabled, life recording and daily planning will stop. Existing data will remain on disk."
+    },
+    "inject_guide": {
+      "description": "Auto Inject Usage Guide",
+      "hint": "Injects usage guidance into prompts each round. Disable this if instructions are already integrated into your persona card to save ~230 chars/round."
+    },
+    "small_ttl_hours": {
+      "description": "Minor Event Retention (Hours)",
+      "hint": "How long past minor events are retained. Defaults to 24 hours (1 day) before fading."
+    },
+    "ongoing_ttl_hours": {
+      "description": "Ongoing Event Fallback TTL (Hours)",
+      "hint": "Fallback TTL to prevent forgotten ongoing events from lingering indefinitely. Defaults to 168 hours (7 days)."
+    },
+    "max_events": {
+      "description": "Max Events Limit",
+      "hint": "Maximum capacity of the life event pool to prevent bloat. Defaults to 60."
+    },
+    "storage_scope": {
+      "description": "Storage Scope Mode",
+      "hint": "persona: isolate life lines by persona; global: share a single life line across all personas.",
+      "labels": ["Per-Persona Isolation (Recommended)", "Global Shared Life Line"]
+    },
+    "enable_holiday": {
+      "description": "Holiday Awareness",
+      "hint": "Automatically recognizes statutory and traditional holidays to enrich context and mood."
+    },
+    "enable_outfit": {
+      "description": "Outfit Awareness",
+      "hint": "Allows AI personas to perceive daily outfits and styling in today's state."
+    },
+    "history_plan_days": {
+      "description": "History Planning Lookback Days",
+      "hint": "Number of previous days' plans to reference (0-7) when planning a new day. Defaults to 2."
+    },
+    "enable_persona_whitelist": {
+      "description": "Enable Persona Whitelist",
+      "hint": "When enabled, only personas in the whitelist will have Life Memory active."
+    },
+    "persona_whitelist": {
+      "description": "Persona Whitelist",
+      "hint": "List of persona IDs allowed to use life memory (e.g. default, cat_girl)."
+    },
+    "session_list_mode": {
+      "description": "Session Filter Mode",
+      "hint": "all: active for all sessions; whitelist: only in whitelist; blacklist: disabled in blacklist.",
+      "labels": ["All Sessions", "Whitelist Only", "Blacklist Excluded"]
+    },
+    "session_list": {
+      "description": "Session List (UMO)",
+      "hint": "Unified Message Origin list, e.g. aiocqhttp:GroupMessage:123456."
+    }
+  },
+  "views": {
+    "dashboard": {
+      "title": "Life Memory Dashboard",
+      "description": "View and manage life memories, daily plans, and event timelines."
+    }
+  }
+}

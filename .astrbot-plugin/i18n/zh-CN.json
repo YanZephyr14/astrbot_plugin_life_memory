@@ -4,10 +4,60 @@
     "short_desc": "为 AI 角色提供拟真的生活记忆层与今日规划",
     "desc": "为 AI 角色提供拟真的生活记忆层：每天第一次上线规划今日大致做什么；记录当天小事与进行中的大事；每轮动态注入生活上下文与规划提醒。"
   },
-  "pages": {
-    "dashboard": {
-      "title": "拟真生活看板",
-      "description": "查看和管理 AI 角色的生活记忆、每日规划与生活事件。"
+  "config": {
+    "enabled": {
+      "description": "启用仿真实生活",
+      "hint": "关掉后不再记录与规划生活，已存的数据保留在磁盘上不删。"
+    },
+    "inject_guide": {
+      "description": "自动注入使用说明",
+      "hint": "开启后每轮会往提示词里注入一小段使用说明，装上就能用、不必再改人设卡。如果你已把使用规则写进角色卡，关掉它可以省约 230 字符/轮。"
+    },
+    "small_ttl_hours": {
+      "description": "小事保留时长（小时）",
+      "hint": "已经过去的日常小事（非进行中）保留多久。默认 24 小时 = 记一天，之后自动淡忘。"
+    },
+    "ongoing_ttl_hours": {
+      "description": "进行中大事兜底时长（小时）",
+      "hint": "进行中的事如果一直未再被提起，超过此时长自动淡忘兜底（防忘了 life_done 就永久挂在进行中）。默认 168 小时 = 7 天。"
+    },
+    "max_events": {
+      "description": "最多记录事件数",
+      "hint": "生活事件池的上限容量，防止长期运行无限膨胀。默认 60 条。"
+    },
+    "storage_scope": {
+      "description": "存储隔离模式",
+      "hint": "persona: 按人格角色设定独立隔离生活记忆（同一个人格在所有聊天中保持连贯的生活线）；global: 全局共用同一份生活线。",
+      "labels": ["按人格角色独立隔离 (推荐)", "全局共享生活线"]
+    },
+    "enable_holiday": {
+      "description": "节日感知",
+      "hint": "开启后自动感知中国法定与传统节日，并在规划与上下文中呈现节日氛围。架空世界观建议关闭。"
+    },
+    "enable_outfit": {
+      "description": "穿搭感知",
+      "hint": "开启后在今日生活状态中感知外貌穿搭风格。非人类或抽象助手角色建议关闭。"
+    },
+    "history_plan_days": {
+      "description": "参考历史规划天数",
+      "hint": "规划新一天或回忆时参考前几天历史规划的数量（0~7天），维持生活起居连续性。默认 2 天。"
+    },
+    "enable_persona_whitelist": {
+      "description": "启用人格白名单",
+      "hint": "开启后仅白名单列表中的人格才会生效拟真生活记忆功能，未在白名单中的人格不记录生活、不注入提示词。"
+    },
+    "persona_whitelist": {
+      "description": "生效的人格白名单",
+      "hint": "允许启用生活记忆的角色 Persona ID 列表（如 default、cat_girl 等）。"
+    },
+    "session_list_mode": {
+      "description": "会话启用范围",
+      "hint": "all: 所有会话均启用；whitelist: 仅列表中会话启用；blacklist: 列表中会话禁用。",
+      "labels": ["全部会话启用", "仅白名单会话", "黑名单禁用"]
+    },
+    "session_list": {
+      "description": "会话列表 (UMO)",
+      "hint": "配合会话启用范围使用，填入统一消息来源 (UMO)，如 aiocqhttp:GroupMessage:123456。"
     }
   },
   "views": {
